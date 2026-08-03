@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+{# All styling is inline/self-contained (no CDN) so the login and
+   dashboard screens keep working with no internet connection, per the
+   SDD's offline-first design goal. #}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Clinic System{% endblock %}</title>
+  <style>
+    :root {
+      --brand: #0f6e5c;
+      --brand-dark: #0b5346;
+      --ink: #1f2933;
+      --muted: #52606d;
+      --border: #d9e2ec;
+      --bg: #f4f7f6;
+      --error: #b3261e;
+      --error-bg: #fbeae9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 17px;
+    }
+    header.topbar {
+      background: var(--brand);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header.topbar .brand { font-weight: 600; font-size: 1.1rem; }
+    header.topbar form { margin: 0; }
+    header.topbar button {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    main { padding: 24px 20px; max-width: 900px; margin: 0 auto; }
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+    }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; }
+    input.input {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    input.input:focus { outline: 2px solid var(--brand); border-color: var(--brand); }
+    button.primary {
+      margin-top: 20px;
+      width: 100%;
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary:hover { background: var(--brand-dark); }
+    .error {
+      background: var(--error-bg);
+      color: var(--error);
+      border: 1px solid var(--error);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-top: 14px;
+      font-size: 0.95rem;
+    }
+    .muted { color: var(--muted); }
+    ul.errorlist { list-style: none; padding: 0; margin: 0; color: var(--error); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  {% block body %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,29 @@
+{% extends "accounts/base.html" %}
+{% block title %}Log in - Clinic System{% endblock %}
+{% block body %}
+<main style="max-width: 420px; margin-top: 8vh;">
+  <div class="card">
+    <h1 style="margin-top:0; font-size:1.4rem;">Clinic System</h1>
+    <p class="muted" style="margin-top:-8px;">Sign in to continue</p>
+
+    {% if form.non_field_errors %}
+      <div class="error">{{ form.non_field_errors.0 }}</div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <label for="{{ form.username.id_for_label }}">Username</label>
+      {{ form.username }}
+
+      <label for="{{ form.password.id_for_label }}">Password</label>
+      {{ form.password }}
+
+      <input type="hidden" name="next" value="{{ next }}">
+      <button type="submit" class="primary">Log in</button>
+    </form>
+  </div>
+  <p class="muted" style="text-align:center; font-size:0.85rem;">
+    Trouble logging in? Ask your clinic administrator to check your account.
+  </p>
+</main>
+{% endblock %}

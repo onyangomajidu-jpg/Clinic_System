@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'core',
+    'accounts',
 ]
 
 MIDDLEWARE = [
@@ -150,3 +151,38 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Default primary key field type
+# https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Authentication / RBAC (UR-10, UR-20, FR-9)
+# https://docs.djangoproject.com/en/6.0/topics/auth/default/
+
+# The default ModelBackend treats "correct password, inactive account" and
+# "wrong password" identically, both surfacing as a generic invalid-login
+# error -- so a deactivated staff member gets no useful signal. Given the
+# high staff turnover this system is designed for (per UR document,
+# section 2), staff need a clear "see your administrator" message instead
+# of a dead end. AllowAllUsersModelBackend still checks the password first;
+# it only changes what happens *after* the password is confirmed correct,
+# letting AuthenticationForm's own is_active check produce the clearer
+# "inactive" error defined in accounts.forms.StaffLoginForm.
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.AllowAllUsersModelBackend',
+]
+
+LOGIN_URL = 'accounts:login'
+LOGIN_REDIRECT_URL = 'accounts:dashboard'
+LOGOUT_REDIRECT_URL = 'accounts:login'
+
+# UR-10: staff on a shared clinic device shouldn't need a long login
+# process each time they pick the device back up during their shift, but
+# NFR-5 (data protection) means sessions still shouldn't linger forever.
+# A session lasts one working shift and extends on activity; it does not
+# persist after the browser is fully closed.
+SESSION_COOKIE_AGE = 8 * 60 * 60  # 8 hours
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True

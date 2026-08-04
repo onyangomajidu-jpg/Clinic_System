@@ -10,12 +10,16 @@ A Django-based clinic management system.
 
 ## Project status
 
-**Day 5 — Visit management.** Building on patient registration (Day 4),
-this adds the clinical consultation workspace: record a visit with vitals
-(BP, pulse, temperature, weight), chief complaint, diagnosis (with a
-quick-pick list of common diagnoses), and notes; view a patient's full
-visit history; and review individual visit details. The attending staff
-member is captured automatically from the logged-in user's role.
+**Day 6 — Integration & testing (Week 1 complete).** All Week 1 modules
+merged into `develop` and released as **v0.1**: registration through
+consultation works end-to-end and is verified by 52 passing tests (42 unit
++ 10 integration). The integration suite (per SDD section 11) exercises
+the full journey — a receptionist registers a patient, a clinician
+records a consultation with vitals and diagnosis, and the visit history
+and detail views confirm the record end-to-end. Cross-role workflow tests
+verify the Day 3 RBAC gates the clinical screens correctly, and
+model-level tests cover the stock/billing business rules that later
+modules build on. Merged to `main` and tagged `v0.1`.
 
 **Previous days:**
 - **Day 1 — Project setup.** Initial skeleton: a running Django project
@@ -28,6 +32,11 @@ member is captured automatically from the logged-in user's role.
   control, and role-scoped dashboard.
 - **Day 4 — Patient registration.** Register patients, search by name/phone/
   card number, and print patient cards.
+- **Day 5 — Visit management.** Clinical consultation workspace: record a
+  visit with vitals (BP, pulse, temperature, weight), chief complaint,
+  diagnosis (with a quick-pick list of common diagnoses), and notes; view a
+  patient's full visit history; and review individual visit details.
+  Attending staff is captured automatically from the logged-in user's role.
 
 ## Branch structure
 

@@ -1,0 +1,115 @@
+{% extends "accounts/base.html" %}
+{% block title %}Register Patient - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Register a new patient</h1>
+        <p class="muted" style="margin-top:-6px;">
+          Only the patient's name and sex are required. If they don't know their
+          exact date of birth, an estimated age is fine.
+        </p>
+      </div>
+      <a class="btn-secondary" href="{% url 'core:patient_search' %}">Search existing patients</a>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    {% if form.non_field_errors %}
+      <div class="error">{{ form.non_field_errors.0 }}</div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="grid">
+        <div class="field">
+          <label for="{{ form.full_name.id_for_label }}">Full name *</label>
+          {{ form.full_name }}
+          {% for error in form.full_name.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.sex.id_for_label }}">Sex *</label>
+          {{ form.sex }}
+          {% for error in form.sex.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.date_of_birth.id_for_label }}">Date of birth</label>
+          {{ form.date_of_birth }}
+          {% for error in form.date_of_birth.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.estimated_age.id_for_label }}">Estimated age</label>
+          {{ form.estimated_age }}
+          <span class="hint">Use this if the patient doesn't know their birth date.</span>
+          {% for error in form.estimated_age.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.phone_number.id_for_label }}">Phone number</label>
+          {{ form.phone_number }}
+          <span class="hint">Used for SMS appointment reminders.</span>
+          {% for error in form.phone_number.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.blood_group.id_for_label }}">Blood group</label>
+          {{ form.blood_group }}
+          {% for error in form.blood_group.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.village.id_for_label }}">Village</label>
+          {{ form.village }}
+          {% for error in form.village.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.parish.id_for_label }}">Parish</label>
+          {{ form.parish }}
+          {% for error in form.parish.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.district.id_for_label }}">District</label>
+          {{ form.district }}
+          {% for error in form.district.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.next_of_kin_name.id_for_label }}">Next of kin name</label>
+          {{ form.next_of_kin_name }}
+          {% for error in form.next_of_kin_name.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.next_of_kin_phone.id_for_label }}">Next of kin phone</label>
+          {{ form.next_of_kin_phone }}
+          {% for error in form.next_of_kin_phone.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+      </div>
+
+      <button type="submit" class="primary">Register patient</button>
+    </form>
+  </div>
+</main>
+{% endblock %}

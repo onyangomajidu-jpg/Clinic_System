@@ -19,20 +19,53 @@
       Below is what your account currently has access to.
     </p>
 
-    <ul style="line-height:2;">
-      {% if can_manage_patients %}<li>Patients &mdash; register and search patient records</li>{% endif %}
-      {% if can_manage_visits %}<li>Visits &mdash; record consultations, vitals, and diagnoses</li>{% endif %}
-      {% if can_manage_pharmacy %}<li>Pharmacy &mdash; view/manage drug stock</li>{% endif %}
-      {% if can_manage_billing %}<li>Billing &mdash; invoices and payments</li>{% endif %}
-      {% if can_manage_lab %}<li>Lab &mdash; order and record test results</li>{% endif %}
-      {% if can_manage_staff %}<li>Staff accounts &mdash; manage clinic staff and roles</li>{% endif %}
-    </ul>
+    <div class="menu-grid">
+      {% if can_manage_patients %}
+        <a class="menu-card" href="{% url 'core:patient_register' %}">
+          <strong>Register patient</strong>
+          <span class="muted">Add a new patient and print their card</span>
+        </a>
+        <a class="menu-card" href="{% url 'core:patient_search' %}">
+          <strong>Search patients</strong>
+          <span class="muted">Find a patient by name, phone, or card number</span>
+        </a>
+      {% endif %}
+      {% if can_manage_visits %}
+        <div class="menu-card">
+          <strong>Visits</strong>
+          <span class="muted">Record consultations, vitals, and diagnoses (coming soon)</span>
+        </div>
+      {% endif %}
+      {% if can_manage_pharmacy %}
+        <div class="menu-card">
+          <strong>Pharmacy</strong>
+          <span class="muted">View/manage drug stock (coming soon)</span>
+        </div>
+      {% endif %}
+      {% if can_manage_billing %}
+        <div class="menu-card">
+          <strong>Billing</strong>
+          <span class="muted">Invoices and payments (coming soon)</span>
+        </div>
+      {% endif %}
+      {% if can_manage_lab %}
+        <div class="menu-card">
+          <strong>Lab</strong>
+          <span class="muted">Order and record test results (coming soon)</span>
+        </div>
+      {% endif %}
+      {% if can_manage_staff %}
+        <div class="menu-card">
+          <strong>Staff accounts</strong>
+          <span class="muted">Manage clinic staff and roles (coming soon)</span>
+        </div>
+      {% endif %}
+    </div>
 
     <p class="muted" style="font-size:0.9rem;">
-      These modules are being built out day by day; for now, day-to-day
-      data entry for what you can access above happens through
-      <a href="/admin/">the admin area</a>, which only shows the sections
-      your role is permitted to use.
+      For advanced data entry, the
+      <a href="/admin/">admin area</a> is also available and only shows the
+      sections your role is permitted to use.
     </p>
   </div>
 </main>

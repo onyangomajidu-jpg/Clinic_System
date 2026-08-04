@@ -1,0 +1,106 @@
+{% extends "accounts/base.html" %}
+{% block title %}Search Patients - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Search patients</h1>
+        <p class="muted" style="margin-top:-6px;">
+          Search by name, phone number, or card number. Partial or misspelled
+          names usually still work.
+        </p>
+      </div>
+      <a class="btn-secondary" href="{% url 'core:patient_register' %}">Register new patient</a>
+    </div>
+
+    <form method="get" action="{% url 'core:patient_search' %}" class="search-form">
+      <input
+        type="search"
+        name="q"
+        value="{{ query }}"
+        class="input"
+        placeholder="e.g. Nakato, 0772, or CL-2026-0001"
+        autofocus
+        aria-label="Search patients"
+      >
+      <button type="submit" class="btn-primary">Search</button>
+    </form>
+
+    {% if query %}
+      <p class="muted" style="margin-top:16px;">
+        {{ page_obj.paginator.count }} result{{ page_obj.paginator.count|pluralize }} for
+        &ldquo;{{ query }}&rdquo;
+      </p>
+    {% endif %}
+
+    {% if patients %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Card no.</th>
+              <th>Name</th>
+              <th>Sex</th>
+              <th>Phone</th>
+              <th>Village / Parish</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for patient in patients %}
+              <tr>
+                <td class="mono">{{ patient.patient_card_no|default:"&mdash;" }}</td>
+                <td>{{ patient.full_name }}</td>
+                <td>{{ patient.get_sex_display }}</td>
+                <td>{{ patient.phone_number|default:"&mdash;" }}</td>
+                <td>
+                  {{ patient.village|default:"" }}{% if patient.village and patient.parish %}, {% endif %}{{ patient.parish|default:"" }}
+                </td>
+                <td class="actions">
+                  <a class="btn-small" href="{% url 'core:patient_card' patient.pk %}">Card</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if page_obj.has_other_pages %}
+        <nav class="pagination" aria-label="Search results pages">
+          {% if page_obj.has_previous %}
+            <a class="btn-small" href="?q={{ query|urlencode }}&page={{ page_obj.previous_page_number }}">&laquo; Previous</a>
+          {% endif %}
+          <span class="muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+          {% if page_obj.has_next %}
+            <a class="btn-small" href="?q={{ query|urlencode }}&page={{ page_obj.next_page_number }}">Next &raquo;</a>
+          {% endif %}
+        </nav>
+      {% endif %}
+    {% else %}
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr>
+              <td class="empty">
+                {% if query %}No patients found. Try a different name, phone, or card number.{% else %}Enter a search term above to find a patient.{% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

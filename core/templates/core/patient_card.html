@@ -1,0 +1,84 @@
+{% extends "accounts/base.html" %}
+{% block title %}Patient Card - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar no-print">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:patient_search' %}">Search patients</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  {% if messages %}
+    {% for message in messages %}
+      <div class="success no-print">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="card patient-card">
+    <div class="card-head">
+      <div>
+        <h1 style="margin:0; font-size:1.2rem;">Patient Card</h1>
+        <p class="muted" style="margin:2px 0 0;">Keep this card for your future visits.</p>
+      </div>
+      <div class="card-no">
+        <span class="muted">Card number</span>
+        <strong class="mono">{{ patient.patient_card_no }}</strong>
+      </div>
+    </div>
+
+    <div class="card-body">
+      <div class="detail">
+        <span class="muted">Name</span>
+        <strong>{{ patient.full_name }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Sex</span>
+        <strong>{{ patient.get_sex_display }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Age</span>
+        <strong>
+          {% if patient.date_of_birth %}
+            {{ patient.date_of_birth }}
+          {% elif patient.estimated_age %}
+            ~{{ patient.estimated_age }} years
+          {% else %}
+            &mdash;
+          {% endif %}
+        </strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Blood group</span>
+        <strong>{{ patient.blood_group|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Phone</span>
+        <strong>{{ patient.phone_number|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Village / Parish / District</span>
+        <strong>
+          {{ patient.village|default:"" }}{% if patient.village and patient.parish %}, {% endif %}{{ patient.parish|default:"" }}{% if patient.parish and patient.district %}, {% endif %}{{ patient.district|default:"" }}
+        </strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Next of kin</span>
+        <strong>
+          {{ patient.next_of_kin_name|default:"&mdash;" }}{% if patient.next_of_kin_phone %} ({{ patient.next_of_kin_phone }}){% endif %}
+        </strong>
+      </div>
+    </div>
+
+    <div class="card-foot no-print">
+      <button type="button" class="btn-primary" onclick="window.print()">Print card</button>
+      <a class="btn-secondary" href="{% url 'core:patient_register' %}">Register another patient</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

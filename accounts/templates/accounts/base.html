@@ -246,6 +246,56 @@
     .detail .muted { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }
     .card-foot { display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 16px; }
 
+    /* Status badges (visit open/closed/referred) */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .badge-open { background: #e8f0fe; color: #1a56db; }
+    .badge-closed { background: var(--success-bg); color: var(--success); }
+    .badge-referred { background: #fef3c7; color: #92400e; }
+
+    /* Vitals display on visit detail */
+    .vitals-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .vital {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .vital .muted { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .vital strong { font-size: 1.05rem; }
+
+    /* Visit history list */
+    .visit-list { list-style: none; padding: 0; margin: 18px 0 0; }
+    .visit-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .visit-item:last-child { border-bottom: none; }
+    .visit-item .visit-main { min-width: 0; flex: 1; }
+    .visit-item .visit-date { font-size: 0.85rem; color: var(--muted); }
+    .visit-item .visit-dx { margin-top: 4px; font-size: 0.95rem; }
+    .visit-item .visit-actions { display: flex; gap: 8px; align-items: center; }
+
     /* Print: hide navigation and buttons, keep only the card */
     @media print {
       .no-print { display: none !important; }

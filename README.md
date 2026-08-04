@@ -10,9 +10,24 @@ A Django-based clinic management system.
 
 ## Project status
 
-**Day 1 — Project setup.** This is the initial skeleton: a running Django
-project wired up for either SQLite (quick local dev) or PostgreSQL
-(via Docker), with a health-check endpoint to confirm everything boots.
+**Day 5 — Visit management.** Building on patient registration (Day 4),
+this adds the clinical consultation workspace: record a visit with vitals
+(BP, pulse, temperature, weight), chief complaint, diagnosis (with a
+quick-pick list of common diagnoses), and notes; view a patient's full
+visit history; and review individual visit details. The attending staff
+member is captured automatically from the logged-in user's role.
+
+**Previous days:**
+- **Day 1 — Project setup.** Initial skeleton: a running Django project
+  wired up for either SQLite (quick local dev) or PostgreSQL (via Docker),
+  with a health-check endpoint to confirm everything boots.
+- **Day 2 — Database models.** Core clinic data models (Patient, Visit,
+  Staff, Drug, Prescription, Invoice, LabTest) with UUID primary keys and
+  sync metadata per the SDD.
+- **Day 3 — User management & RBAC.** Staff accounts, role-based access
+  control, and role-scoped dashboard.
+- **Day 4 — Patient registration.** Register patients, search by name/phone/
+  card number, and print patient cards.
 
 ## Branch structure
 

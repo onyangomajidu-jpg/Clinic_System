@@ -6,8 +6,8 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 
-from .forms import PatientRegistrationForm
-from .models import Patient
+from .forms import PatientRegistrationForm, VisitForm
+from .models import Patient, Visit
 
 
 def health_check(request):
@@ -84,3 +84,67 @@ def patient_card(request, pk):
     """
     patient = get_object_or_404(Patient, pk=pk)
     return render(request, "core/patient_card.html", {"patient": patient})
+
+
+@login_required
+def patient_visits(request, pk):
+    """
+    UR-6 / FR-3: show a patient's full visit history, newest first.
+
+    This is the "quickly pull up a patient's visit history" screen a
+    clinician needs before (or during) a consultation. It lists every visit
+    with its date, type, status, complaint, and diagnosis, and links to the
+    full detail page for each one.
+    """
+    patient = get_object_or_404(Patient, pk=pk)
+    visits = patient.visits.all()
+    return render(
+        request,
+        "core/patient_visits.html",
+        {"patient": patient, "visits": visits},
+    )
+
+
+@login_required
+def visit_create(request, pk):
+    """
+    UR-7 / FR-3: record a new visit for a patient.
+
+    The attending staff member is captured automatically from the logged-in
+    user's Staff profile so the clinician doesn't have to pick themselves
+    from a dropdown (UR-10: fast, uncluttered workflow on a shared device).
+    Vitals are entered as individual fields and folded into the Visit.vitals
+    JSON blob by VisitForm.save().
+    """
+    patient = get_object_or_404(Patient, pk=pk)
+    staff = getattr(request.user, "staff_profile", None)
+
+    if request.method == "POST":
+        form = VisitForm(request.POST)
+        if form.is_valid():
+            visit = form.save(commit=False)
+            visit.patient = patient
+            if staff is not None:
+                visit.attending_staff = staff
+            visit.save()
+            messages.success(request, "Visit recorded.")
+            return redirect("core:visit_detail", pk=visit.pk)
+    else:
+        form = VisitForm()
+
+    return render(
+        request,
+        "core/visit_create.html",
+        {"form": form, "patient": patient},
+    )
+
+
+@login_required
+def visit_detail(request, pk):
+    """
+    UR-6: full detail of a single visit, including vitals, complaint,
+    diagnosis, notes, and status. This is the record a clinician reviews
+    when a patient returns for a follow-up.
+    """
+    visit = get_object_or_404(Visit, pk=pk)
+    return render(request, "core/visit_detail.html", {"visit": visit})

@@ -1,0 +1,79 @@
+{% extends "accounts/base.html" %}
+{% block title %}Visit History - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:patient_search' %}">Search patients</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Visit history</h1>
+        <p class="muted" style="margin-top:-6px;">
+          <strong>{{ patient.full_name }}</strong>
+          {% if patient.age %}&middot; {{ patient.age }} yrs{% endif %}
+          &middot; {{ patient.get_sex_display }}
+          {% if patient.patient_card_no %}&middot; <span class="mono">{{ patient.patient_card_no }}</span>{% endif %}
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-primary" href="{% url 'core:visit_create' patient.pk %}">Record new visit</a>
+        <a class="btn-secondary" href="{% url 'core:patient_card' patient.pk %}">Patient card</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    {% if visits %}
+      <ul class="visit-list">
+        {% for visit in visits %}
+          <li class="visit-item">
+            <div class="visit-main">
+              <div class="visit-date">
+                {{ visit.visit_date|date:"D, d M Y H:i" }}
+                &middot; {{ visit.get_visit_type_display }}
+              </div>
+              {% if visit.chief_complaint %}
+                <div class="visit-dx"><strong>Complaint:</strong> {{ visit.chief_complaint|truncatechars:80 }}</div>
+              {% endif %}
+              {% if visit.diagnosis %}
+                <div class="visit-dx"><strong>Diagnosis:</strong> {{ visit.diagnosis|truncatechars:80 }}</div>
+              {% endif %}
+            </div>
+            <div class="visit-actions">
+              <span class="badge badge-{{ visit.status }}">{{ visit.get_status_display }}</span>
+              <a class="btn-small" href="{% url 'core:visit_detail' visit.pk %}">View</a>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr>
+              <td class="empty">
+                No visits recorded yet for this patient.
+                <a href="{% url 'core:visit_create' patient.pk %}">Record the first visit</a>.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Patient
+from .models import Patient, Visit
 
 
 class PatientRegistrationForm(forms.ModelForm):
@@ -112,3 +112,137 @@ class PatientRegistrationForm(forms.ModelForm):
             if not Patient.objects.filter(patient_card_no=candidate).exists():
                 return candidate
             base += 1
+
+
+class VisitForm(forms.ModelForm):
+    """
+    UR-6 / UR-7 / FR-3: record a patient visit with vitals, complaint,
+    diagnosis, and notes.
+
+    Designed for minimal typing (SDD section 2 / NFR-3): the visit type is a
+    dropdown, vitals are split into individual numeric fields (BP, pulse,
+    temperature, weight) that map into the Visit.vitals JSON blob, and the
+    diagnosis field offers a datalist of common diagnoses so a clinician can
+    pick one instead of typing it (UR-7: "dropdowns for common diagnoses
+    where possible").
+    """
+
+    # Vitals are stored as a JSON blob on Visit.vitals (SDD 5.2), but we
+    # expose them as individual form fields so the UI stays simple and the
+    # data is validated per-field. They are optional -- a quick triage visit
+    # shouldn't be blocked because the scale is broken.
+    blood_pressure = forms.CharField(
+        required=False,
+        label="Blood pressure",
+        widget=forms.TextInput(
+            attrs={
+                "class": "input",
+                "placeholder": "e.g. 120/80",
+                "inputmode": "numeric",
+            }
+        ),
+    )
+    pulse = forms.IntegerField(
+        required=False,
+        label="Pulse (bpm)",
+        widget=forms.NumberInput(
+            attrs={"class": "input", "placeholder": "e.g. 72", "min": 0, "max": 300}
+        ),
+    )
+    temperature = forms.DecimalField(
+        required=False,
+        label="Temperature (°C)",
+        max_digits=4,
+        decimal_places=1,
+        widget=forms.NumberInput(
+            attrs={"class": "input", "placeholder": "e.g. 37.0", "step": "0.1"}
+        ),
+    )
+    weight = forms.DecimalField(
+        required=False,
+        label="Weight (kg)",
+        max_digits=5,
+        decimal_places=1,
+        widget=forms.NumberInput(
+            attrs={"class": "input", "placeholder": "e.g. 65.0", "step": "0.1"}
+        ),
+    )
+
+    # Common diagnoses seen in community clinics (UR-7). Used as a datalist
+    # so the clinician can type or pick; the field itself is free text.
+    COMMON_DIAGNOSES = [
+        "Malaria",
+        "Upper respiratory tract infection",
+        "Pneumonia",
+        "Diarrhoea",
+        "Typhoid fever",
+        "Urinary tract infection",
+        "Hypertension",
+        "Diabetes mellitus",
+        "Anaemia",
+        "Gastritis",
+        "Skin infection",
+        "Malnutrition",
+        "Tuberculosis (suspected)",
+        "HIV (suspected)",
+        "Antenatal check-up",
+        "Postnatal check-up",
+        "Trauma / injury",
+        "Other",
+    ]
+
+    class Meta:
+        model = Visit
+        fields = [
+            "visit_type",
+            "chief_complaint",
+            "diagnosis",
+            "notes",
+            "status",
+        ]
+        widgets = {
+            "visit_type": forms.Select(attrs={"class": "input"}),
+            "chief_complaint": forms.Textarea(
+                attrs={
+                    "class": "input",
+                    "rows": 3,
+                    "placeholder": "e.g. Fever and headache for 2 days",
+                }
+            ),
+            "diagnosis": forms.TextInput(
+                attrs={
+                    "class": "input",
+                    "list": "common-diagnoses",
+                    "placeholder": "Type or pick a common diagnosis",
+                }
+            ),
+            "notes": forms.Textarea(
+                attrs={
+                    "class": "input",
+                    "rows": 3,
+                    "placeholder": "Additional clinical notes (optional)",
+                }
+            ),
+            "status": forms.Select(attrs={"class": "input"}),
+        }
+
+    def save(self, commit=True):
+        """
+        Persist the visit, folding the individual vitals fields into the
+        Visit.vitals JSON blob (SDD 5.2) before saving.
+        """
+        visit = super().save(commit=False)
+        vitals = {}
+        for field, key in (
+            ("blood_pressure", "bp"),
+            ("pulse", "pulse"),
+            ("temperature", "temperature"),
+            ("weight", "weight"),
+        ):
+            value = self.cleaned_data.get(field)
+            if value not in (None, ""):
+                vitals[key] = str(value)
+        visit.vitals = vitals
+        if commit:
+            visit.save()
+        return visit

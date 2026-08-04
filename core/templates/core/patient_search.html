@@ -69,6 +69,7 @@
                   {{ patient.village|default:"" }}{% if patient.village and patient.parish %}, {% endif %}{{ patient.parish|default:"" }}
                 </td>
                 <td class="actions">
+                  <a class="btn-small" href="{% url 'core:patient_visits' patient.pk %}">Visits</a>
                   <a class="btn-small" href="{% url 'core:patient_card' patient.pk %}">Card</a>
                 </td>
               </tr>

@@ -132,6 +132,24 @@ class Patient(SyncedModel):
     def __str__(self):
         return f"{self.full_name} ({self.patient_card_no or 'no card'})"
 
+    @property
+    def age(self):
+        """
+        Best-effort age in years, for clinical context (UR-7).
+
+        Prefers a precise calculation from date_of_birth; falls back to the
+        receptionist-entered estimated_age when the patient does not know
+        their exact birth date (UR-1).
+        """
+        if self.date_of_birth:
+            today = date.today()
+            return (
+                today.year
+                - self.date_of_birth.year
+                - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
+            )
+        return self.estimated_age
+
 
 class Drug(SyncedModel):
     """UR-8/UR-12/UR-13: pharmacy stock backing prescriptions and alerts."""

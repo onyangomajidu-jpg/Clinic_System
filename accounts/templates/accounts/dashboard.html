@@ -31,10 +31,10 @@
         </a>
       {% endif %}
       {% if can_manage_visits %}
-        <div class="menu-card">
+        <a class="menu-card" href="{% url 'core:patient_search' %}">
           <strong>Visits</strong>
-          <span class="muted">Record consultations, vitals, and diagnoses (coming soon)</span>
-        </div>
+          <span class="muted">Find a patient to record a consultation, vitals, and diagnosis</span>
+        </a>
       {% endif %}
       {% if can_manage_pharmacy %}
         <div class="menu-card">

@@ -77,6 +77,7 @@
 
     <div class="card-foot no-print">
       <button type="button" class="btn-primary" onclick="window.print()">Print card</button>
+      <a class="btn-secondary" href="{% url 'core:patient_visits' patient.pk %}">Visit history</a>
       <a class="btn-secondary" href="{% url 'core:patient_register' %}">Register another patient</a>
     </div>
   </div>

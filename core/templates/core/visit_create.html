@@ -1,0 +1,112 @@
+{% extends "accounts/base.html" %}
+{% block title %}Record Visit - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:patient_visits' patient.pk %}">Visit history</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Record a visit</h1>
+        <p class="muted" style="margin-top:-6px;">
+          <strong>{{ patient.full_name }}</strong>
+          {% if patient.age %}&middot; {{ patient.age }} yrs{% endif %}
+          &middot; {{ patient.get_sex_display }}
+          {% if patient.patient_card_no %}&middot; <span class="mono">{{ patient.patient_card_no }}</span>{% endif %}
+        </p>
+      </div>
+      <a class="btn-secondary" href="{% url 'core:patient_visits' patient.pk %}">View visit history</a>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    {% if form.non_field_errors %}
+      <div class="error">{{ form.non_field_errors.0 }}</div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="grid">
+        <div class="field">
+          <label for="{{ form.visit_type.id_for_label }}">Visit type</label>
+          {{ form.visit_type }}
+          {% for error in form.visit_type.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.status.id_for_label }}">Status</label>
+          {{ form.status }}
+          {% for error in form.status.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="field">
+          <label for="{{ form.blood_pressure.id_for_label }}">Blood pressure</label>
+          {{ form.blood_pressure }}
+          {% for error in form.blood_pressure.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.pulse.id_for_label }}">Pulse (bpm)</label>
+          {{ form.pulse }}
+          {% for error in form.pulse.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.temperature.id_for_label }}">Temperature (°C)</label>
+          {{ form.temperature }}
+          {% for error in form.temperature.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.weight.id_for_label }}">Weight (kg)</label>
+          {{ form.weight }}
+          {% for error in form.weight.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="{{ form.chief_complaint.id_for_label }}">Chief complaint</label>
+        {{ form.chief_complaint }}
+        {% for error in form.chief_complaint.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+      </div>
+
+      <div class="field">
+        <label for="{{ form.diagnosis.id_for_label }}">Diagnosis</label>
+        {{ form.diagnosis }}
+        <datalist id="common-diagnoses">
+          {% for dx in form.COMMON_DIAGNOSES %}
+            <option value="{{ dx }}"></option>
+          {% endfor %}
+        </datalist>
+        <span class="hint">Start typing or pick a common diagnosis from the list.</span>
+        {% for error in form.diagnosis.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+      </div>
+
+      <div class="field">
+        <label for="{{ form.notes.id_for_label }}">Notes</label>
+        {{ form.notes }}
+        {% for error in form.notes.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+      </div>
+
+      <button type="submit" class="primary">Save visit</button>
+    </form>
+  </div>
+</main>
+{% endblock %}

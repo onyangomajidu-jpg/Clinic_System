@@ -1,0 +1,105 @@
+{% extends "accounts/base.html" %}
+{% block title %}Visit Detail - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:patient_visits' visit.patient.pk %}">Visit history</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Visit details</h1>
+        <p class="muted" style="margin-top:-6px;">
+          <a href="{% url 'core:patient_visits' visit.patient.pk %}">{{ visit.patient.full_name }}</a>
+          {% if visit.patient.age %}&middot; {{ visit.patient.age }} yrs{% endif %}
+          &middot; {{ visit.patient.get_sex_display }}
+          {% if visit.patient.patient_card_no %}&middot; <span class="mono">{{ visit.patient.patient_card_no }}</span>{% endif %}
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-primary" href="{% url 'core:visit_create' visit.patient.pk %}">New visit</a>
+        <a class="btn-secondary" href="{% url 'core:patient_card' visit.patient.pk %}">Patient card</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card-head" style="margin-top:18px;">
+      <div>
+        <div class="visit-date muted">
+          {{ visit.visit_date|date:"l, d M Y H:i" }}
+          &middot; {{ visit.get_visit_type_display }}
+        </div>
+        {% if visit.attending_staff %}
+          <div class="muted" style="font-size:0.9rem; margin-top:4px;">
+            Attending: {{ visit.attending_staff.name }} ({{ visit.attending_staff.get_role_display }})
+          </div>
+        {% endif %}
+      </div>
+      <span class="badge badge-{{ visit.status }}">{{ visit.get_status_display }}</span>
+    </div>
+
+    {% if visit.vitals %}
+      <h2 style="font-size:1rem; margin:20px 0 0;">Vitals</h2>
+      <div class="vitals-grid">
+        {% if visit.vitals.bp %}
+          <div class="vital">
+            <span class="muted">Blood pressure</span>
+            <strong>{{ visit.vitals.bp }}</strong>
+          </div>
+        {% endif %}
+        {% if visit.vitals.pulse %}
+          <div class="vital">
+            <span class="muted">Pulse</span>
+            <strong>{{ visit.vitals.pulse }} bpm</strong>
+          </div>
+        {% endif %}
+        {% if visit.vitals.temperature %}
+          <div class="vital">
+            <span class="muted">Temperature</span>
+            <strong>{{ visit.vitals.temperature }} °C</strong>
+          </div>
+        {% endif %}
+        {% if visit.vitals.weight %}
+          <div class="vital">
+            <span class="muted">Weight</span>
+            <strong>{{ visit.vitals.weight }} kg</strong>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="card-body" style="padding-top:18px;">
+      <div class="detail">
+        <span class="muted">Chief complaint</span>
+        <strong>{{ visit.chief_complaint|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Diagnosis</span>
+        <strong>{{ visit.diagnosis|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Notes</span>
+        <strong>{{ visit.notes|default:"&mdash;" }}</strong>
+      </div>
+    </div>
+
+    <div class="card-foot no-print">
+      <a class="btn-secondary" href="{% url 'core:patient_visits' visit.patient.pk %}">&laquo; Back to visit history</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

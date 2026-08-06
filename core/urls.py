@@ -37,4 +37,11 @@ urlpatterns = [
     path("appointments/<uuid:pk>/cancel/", views.appointment_cancel, name="appointment_cancel"),
     path("appointments/<uuid:pk>/attended/", views.appointment_mark_attended, name="appointment_mark_attended"),
     path("patients/<uuid:pk>/appointments/new/", views.appointment_create, name="appointment_create"),
+    # Reporting & Analytics
+    path("reports/", views.reporting_dashboard, name="reporting_dashboard"),
+    path("reports/patient-volumes/", views.report_patient_volumes, name="report_patient_volumes"),
+    path("reports/diagnoses/", views.report_diagnoses, name="report_diagnoses"),
+    path("reports/revenue/", views.report_revenue, name="report_revenue"),
+    path("reports/drug-usage/", views.report_drug_usage, name="report_drug_usage"),
+    path("reports/export/<str:report_type>/", views.report_export_csv, name="report_export_csv"),
 ]

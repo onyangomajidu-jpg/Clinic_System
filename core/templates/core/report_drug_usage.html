@@ -1,0 +1,68 @@
+{% extends "accounts/base.html" %}
+{% block title %}Drug Usage Report - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:reporting_dashboard' %}">Reports</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Drug usage</h1>
+        <p class="muted" style="margin-top:-6px;">UR-19 / FR-11: dispensed quantities and revenue by drug.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:report_export_csv' 'drug_usage' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}">Export CSV</a>
+      </div>
+    </div>
+
+    <form method="get" class="search-form" style="margin-top:18px;">
+      <label style="margin:0;" for="start_date">From:</label>
+      <input type="date" name="start_date" id="start_date" class="input" value="{{ start_date|date:'Y-m-d' }}" style="flex:0 0 180px;">
+      <label style="margin:0;" for="end_date">To:</label>
+      <input type="date" name="end_date" id="end_date" class="input" value="{{ end_date|date:'Y-m-d' }}" style="flex:0 0 180px;">
+      <button class="btn-primary" type="submit" style="padding:10px 18px;">Apply</button>
+    </form>
+
+    {% if drugs %}
+      <div class="table-wrap" style="margin-top:18px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Drug</th>
+              <th>Quantity dispensed</th>
+              <th>Prescriptions</th>
+              <th>Revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in drugs %}
+            <tr>
+              <td><strong>{{ row.drug }}</strong></td>
+              <td>{{ row.quantity_dispensed }}</td>
+              <td>{{ row.prescriptions }}</td>
+              <td>UGX {{ row.revenue }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:18px;">No drugs dispensed in this period.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:reporting_dashboard' %}">&laquo; Back to reports</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

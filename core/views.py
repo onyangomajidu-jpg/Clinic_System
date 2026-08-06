@@ -32,6 +32,12 @@ from .models import (
     StockMovement,
     Visit,
 )
+from .reports import (
+    diagnosis_report,
+    drug_usage_report,
+    patient_volume_report,
+    revenue_report,
+)
 from .services import build_reminder_message, send_sms
 
 
@@ -793,3 +799,144 @@ def appointment_mark_attended(request, pk):
     appointment.save(update_fields=["status", "last_modified"])
     messages.success(request, "Appointment marked as attended.")
     return redirect("core:appointment_dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Reporting & Analytics (Day 11)
+# UR-19 / UR-23 / FR-11 / SDD Module 7
+# ---------------------------------------------------------------------------
+
+
+def _parse_report_dates(request):
+    """Parse start_date/end_date from GET params, defaulting to last 30 days."""
+    from datetime import datetime
+
+    start_date = request.GET.get("start_date", "")
+    end_date = request.GET.get("end_date", "")
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
+    except ValueError:
+        start = None
+    try:
+        end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
+    except ValueError:
+        end = None
+    if start is None:
+        start = date.today() - timedelta(days=30)
+    if end is None:
+        end = date.today()
+    return start, end
+
+
+@login_required
+def reporting_dashboard(request):
+    """
+    UR-19 / FR-11: reporting landing page with links to all reports.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    return render(request, "core/reporting_dashboard.html", {"staff": staff})
+
+
+@login_required
+def report_patient_volumes(request):
+    """
+    UR-19 / FR-11: patient volumes report over a selectable date range.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    start_date, end_date = _parse_report_dates(request)
+    data = patient_volume_report(start_date, end_date)
+    data["staff"] = staff
+    return render(request, "core/report_patient_volumes.html", data)
+
+
+@login_required
+def report_diagnoses(request):
+    """
+    UR-19 / FR-11: common diagnoses report over a selectable date range.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    start_date, end_date = _parse_report_dates(request)
+    diagnoses = diagnosis_report(start_date, end_date)
+    return render(
+        request,
+        "core/report_diagnoses.html",
+        {
+            "staff": staff,
+            "start_date": start_date,
+            "end_date": end_date,
+            "diagnoses": diagnoses,
+        },
+    )
+
+
+@login_required
+def report_revenue(request):
+    """
+    UR-19 / FR-11: revenue report over a selectable date range.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    start_date, end_date = _parse_report_dates(request)
+    data = revenue_report(start_date, end_date)
+    data["staff"] = staff
+    return render(request, "core/report_revenue.html", data)
+
+
+@login_required
+def report_drug_usage(request):
+    """
+    UR-19 / FR-11: drug usage report over a selectable date range.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    start_date, end_date = _parse_report_dates(request)
+    drugs = drug_usage_report(start_date, end_date)
+    return render(
+        request,
+        "core/report_drug_usage.html",
+        {
+            "staff": staff,
+            "start_date": start_date,
+            "end_date": end_date,
+            "drugs": drugs,
+        },
+    )
+
+
+@login_required
+def report_export_csv(request, report_type):
+    """
+    UR-23 / FR-11: export a report as CSV for district health reporting
+    (DHIS2-friendly format).
+    """
+    import csv
+
+    from django.http import HttpResponse
+
+    start_date, end_date = _parse_report_dates(request)
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = (
+        f'attachment; filename="{report_type}_{start_date}_{end_date}.csv"'
+    )
+    writer = csv.writer(response)
+
+    if report_type == "patient_volumes":
+        writer.writerow(["Date", "Visits"])
+        for row in patient_volume_report(start_date, end_date)["by_day"]:
+            writer.writerow([row["date"], row["visits"]])
+    elif report_type == "diagnoses":
+        writer.writerow(["Diagnosis", "Count"])
+        for row in diagnosis_report(start_date, end_date):
+            writer.writerow([row["diagnosis"], row["count"]])
+    elif report_type == "revenue":
+        writer.writerow(["Date", "Billed", "Collected"])
+        for row in revenue_report(start_date, end_date)["by_day"]:
+            writer.writerow([row["date"], row["billed"], row["collected"]])
+    elif report_type == "drug_usage":
+        writer.writerow(["Drug", "Quantity Dispensed", "Prescriptions", "Revenue"])
+        for row in drug_usage_report(start_date, end_date):
+            writer.writerow(
+                [row["drug"], row["quantity_dispensed"], row["prescriptions"], row["revenue"]]
+            )
+    else:
+        return HttpResponse("Unknown report type", status=400)
+
+    return response

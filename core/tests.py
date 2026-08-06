@@ -1,9 +1,37 @@
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from .forms import PatientRegistrationForm, VisitForm
-from .models import Patient, Staff, Visit
+from .forms import (
+    AppointmentForm,
+    DispenseForm,
+    PatientRegistrationForm,
+    PaymentForm,
+    PrescriptionForm,
+    VisitForm,
+)
+from .models import (
+    Appointment,
+    Drug,
+    Invoice,
+    InvoiceLineItem,
+    Patient,
+    Payment,
+    Prescription,
+    SMSReminder,
+    Staff,
+    StockMovement,
+    Visit,
+)
+from .reports import (
+    diagnosis_report,
+    drug_usage_report,
+    patient_volume_report,
+    revenue_report,
+)
+from .services import build_reminder_message, send_sms
+from .sync import get_all_unsynced, pull_updates, push_unsynced, sync_all
 
 
 class PatientRegistrationTests(TestCase):
@@ -352,3 +380,1797 @@ class VisitFormTests(TestCase):
         self.assertEqual(visit.vitals["pulse"], "88")
         self.assertEqual(visit.vitals["temperature"], "37.5")
         self.assertEqual(visit.vitals["weight"], "70.0")
+
+
+class PharmacyDrugModelTests(TestCase):
+    """UR-13 / FR-5 / FR-6: Drug stock model behaviour."""
+
+    def setUp(self):
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_is_low_stock(self):
+        self.assertFalse(self.drug.is_low_stock)
+        self.drug.stock_quantity = 10
+        self.assertTrue(self.drug.is_low_stock)
+        self.drug.stock_quantity = 5
+        self.assertTrue(self.drug.is_low_stock)
+
+    def test_is_near_expiry(self):
+        from datetime import date, timedelta
+
+        # 60 days out -> near expiry
+        self.drug.expiry_date = date.today() + timedelta(days=60)
+        self.assertTrue(self.drug.is_near_expiry)
+        # 120 days out -> not near expiry
+        self.drug.expiry_date = date.today() + timedelta(days=120)
+        self.assertFalse(self.drug.is_near_expiry)
+
+    def test_is_expired(self):
+        from datetime import date, timedelta
+
+        self.drug.expiry_date = date.today() - timedelta(days=1)
+        self.assertTrue(self.drug.is_expired)
+        self.drug.expiry_date = date.today() + timedelta(days=1)
+        self.assertFalse(self.drug.is_expired)
+
+    def test_dispense_decrements_stock_and_logs_movement(self):
+        new_stock = self.drug.dispense(quantity=10)
+        self.assertEqual(new_stock, 40)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 40)
+        movement = StockMovement.objects.get(drug=self.drug)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.DISPENSE)
+        self.assertEqual(movement.quantity, 10)
+        self.assertEqual(movement.balance_after, 40)
+        self.assertIsNone(movement.prescription)
+
+    def test_dispense_raises_when_insufficient_stock(self):
+        with self.assertRaises(ValueError):
+            self.drug.dispense(quantity=100)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 50)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_dispense_zero_raises(self):
+        with self.assertRaises(ValueError):
+            self.drug.dispense(quantity=0)
+
+    def test_restock_increases_stock_and_logs_movement(self):
+        new_stock = self.drug.restock(quantity=100, staff=None, notes="Supplier delivery")
+        self.assertEqual(new_stock, 150)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 150)
+        movement = StockMovement.objects.get(drug=self.drug)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.RESTOCK)
+        self.assertEqual(movement.quantity, 100)
+        self.assertEqual(movement.balance_after, 150)
+        self.assertEqual(movement.notes, "Supplier delivery")
+
+
+class PrescriptionModelTests(TestCase):
+    """UR-14: partial dispensing and remaining quantity tracking."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=20,
+            unit_price="0.10",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_remaining_quantity_initial(self):
+        self.assertEqual(self.prescription.remaining_quantity, 21)
+        self.assertFalse(self.prescription.is_fully_dispensed)
+
+    def test_remaining_quantity_after_partial_dispense(self):
+        # Simulate partial dispensing (UR-14)
+        self.drug.dispense(quantity=10, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 10
+        self.prescription.dispensed_by = self.staff
+        self.prescription.save()
+        self.assertEqual(self.prescription.remaining_quantity, 11)
+        self.assertFalse(self.prescription.is_fully_dispensed)
+
+    def test_fully_dispensed(self):
+        self.drug.dispense(quantity=21, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 21
+        self.prescription.dispensed_by = self.staff
+        self.prescription.save()
+        self.assertEqual(self.prescription.remaining_quantity, 0)
+        self.assertTrue(self.prescription.is_fully_dispensed)
+
+    def test_dispense_links_stock_movement_to_prescription(self):
+        self.drug.dispense(quantity=5, staff=self.staff, prescription=self.prescription)
+        movement = StockMovement.objects.get(drug=self.drug, prescription=self.prescription)
+        self.assertEqual(movement.staff, self.staff)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.DISPENSE)
+
+
+class PharmacyDashboardTests(TestCase):
+    """UR-11 / UR-13 / FR-6: pharmacy landing page with queue and alerts."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=5,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_pending_prescriptions(self):
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_dashboard_shows_low_stock_alert(self):
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Low stock alerts")
+        self.assertContains(response, "Amoxicillin")
+
+    def test_dashboard_empty_still_loads(self):
+        Prescription.objects.all().delete()
+        Drug.objects.all().delete()
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No prescriptions waiting")
+
+
+class PharmacyDispenseViewTests(TestCase):
+    """UR-11 / UR-12: pharmacist dispenses against a prescription."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.10",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_dispense_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Dispense medication")
+        self.assertContains(response, "Paracetamol")
+
+    def test_dispense_requires_login(self):
+        self.client.logout()
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_dispense_full_quantity(self):
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "21"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.prescription.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 21)
+        self.assertEqual(self.drug.stock_quantity, 29)
+        self.assertEqual(self.prescription.dispensed_by, self.staff)
+        movement = StockMovement.objects.get(
+            drug=self.drug, prescription=self.prescription
+        )
+        self.assertEqual(movement.quantity, 21)
+        self.assertEqual(movement.balance_after, 29)
+
+    def test_partial_dispense(self):
+        """UR-14: dispense only part of the prescription."""
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.prescription.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 10)
+        self.assertEqual(self.drug.stock_quantity, 40)
+
+    def test_cannot_dispense_more_than_remaining(self):
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "22"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cannot dispense more than the remaining")
+        self.prescription.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 0)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 50)
+
+    def test_cannot_dispense_more_than_stock(self):
+        self.drug.stock_quantity = 5
+        self.drug.save()
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "in stock")
+
+    def test_already_fully_dispensed_redirects(self):
+        self.drug.dispense(quantity=21, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 21
+        self.prescription.save()
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertRedirects(response, reverse("core:pharmacy_dashboard"))
+
+
+class PrescriptionFormTests(TestCase):
+    """UR-8 / FR-4: prescription form linked to pharmacy stock."""
+
+    def setUp(self):
+        self.out_of_stock = Drug.objects.create(
+            name="Out of Stock Drug",
+            unit="tablet",
+            stock_quantity=0,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+        self.in_stock = Drug.objects.create(
+            name="In Stock Drug",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+
+    def test_form_only_shows_in_stock_drugs(self):
+        form = PrescriptionForm()
+        drugs = form.fields["drug"].queryset
+        self.assertIn(self.in_stock, drugs)
+        self.assertNotIn(self.out_of_stock, drugs)
+
+    def test_form_is_valid_for_in_stock_drug(self):
+        form = PrescriptionForm(
+            data={
+                "drug": self.in_stock.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "21",
+            }
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_quantity_must_be_positive(self):
+        form = PrescriptionForm(
+            data={
+                "drug": self.in_stock.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "0",
+            }
+        )
+        self.assertFalse(form.is_valid())
+
+
+class DispenseFormTests(TestCase):
+    """UR-14: dispense form validation against prescription and stock."""
+
+    def setUp(self):
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=30,
+            reorder_level=10,
+            unit_price="0.10",
+        )
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_remaining_quantity_is_initial(self):
+        form = DispenseForm(prescription=self.prescription)
+        self.assertEqual(
+            form.fields["quantity_to_dispense"].initial,
+            21,
+        )
+
+    def test_valid_full_dispense(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "21"}, prescription=self.prescription
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_valid_partial_dispense(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "5"}, prescription=self.prescription
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_rejects_more_than_remaining(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "22"}, prescription=self.prescription
+        )
+        self.assertFalse(form.is_valid())
+
+    def test_rejects_more_than_stock(self):
+        self.drug.stock_quantity = 5
+        self.drug.save()
+        form = DispenseForm(
+            {"quantity_to_dispense": "10"}, prescription=self.prescription
+        )
+        self.assertFalse(form.is_valid())
+
+
+class PharmacyDrugInventoryTests(TestCase):
+    """UR-13: manage drug inventory (list, add, edit, restock)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=20,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_drug_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_drug_list"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_drug_list_shows_drugs(self):
+        response = self.client.get(reverse("core:pharmacy_drug_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_drug_create_page_loads(self):
+        response = self.client.get(reverse("core:pharmacy_drug_create"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_drug_create_saves_drug(self):
+        response = self.client.post(
+            reverse("core:pharmacy_drug_create"),
+            {
+                "name": "Metronidazole",
+                "unit": "tablet",
+                "stock_quantity": "100",
+                "reorder_level": "20",
+                "unit_price": "0.20",
+                "expiry_date": "2027-06-01",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Drug.objects.filter(name="Metronidazole").exists())
+
+    def test_drug_edit_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_drug_edit", args=[self.drug.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_drug_edit_updates_drug(self):
+        response = self.client.post(
+            reverse("core:pharmacy_drug_edit", args=[self.drug.pk]),
+            {
+                "name": "Amoxicillin 500mg",
+                "unit": "tablet",
+                "stock_quantity": "25",
+                "reorder_level": "15",
+                "unit_price": "0.60",
+                "expiry_date": "2027-12-01",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.name, "Amoxicillin 500mg")
+        self.assertEqual(self.drug.stock_quantity, 25)
+        self.assertEqual(self.drug.reorder_level, 15)
+
+    def test_restock_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_restock", args=[self.drug.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Restock Amoxicillin")
+
+    def test_restock_increases_stock_and_logs(self):
+        response = self.client.post(
+            reverse("core:pharmacy_restock", args=[self.drug.pk]),
+            {"quantity": "100", "notes": "Monthly delivery"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 120)
+        movement = StockMovement.objects.get(
+            drug=self.drug, movement_type=StockMovement.MovementType.RESTOCK
+        )
+        self.assertEqual(movement.quantity, 100)
+        self.assertEqual(movement.balance_after, 120)
+        self.assertEqual(movement.staff, self.staff)
+        self.assertEqual(movement.notes, "Monthly delivery")
+
+
+class PharmacyStockMovementsTests(TestCase):
+    """SDD section 8: audit trail of stock movements."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.drug.restock(quantity=50, staff=self.staff, notes="Initial stock")
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=10,
+        )
+        self.drug.dispense(quantity=5, staff=self.staff, prescription=self.prescription)
+
+    def test_movements_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_stock_movements"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_movements_page_lists_entries(self):
+        response = self.client.get(reverse("core:pharmacy_stock_movements"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+        self.assertContains(response, "Dispense")
+        self.assertContains(response, "Restock")
+
+    def test_filter_by_dispense_type(self):
+        response = self.client.get(
+            reverse("core:pharmacy_stock_movements"), {"type": "dispense"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the dispense movement (5 units) is shown, not the restock (50 units).
+        self.assertContains(response, "5 tablet(s)")
+        self.assertNotContains(response, "50 tablet(s)")
+
+    def test_filter_by_restock_type(self):
+        response = self.client.get(
+            reverse("core:pharmacy_stock_movements"), {"type": "restock"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the restock movement (50 units) is shown, not the dispense (5 units).
+        self.assertContains(response, "50 tablet(s)")
+        self.assertNotContains(response, "5 tablet(s)")
+
+
+class InvoiceModelTests(TestCase):
+    """UR-15 / UR-16 / FR-7 / FR-8: invoice generation and payment tracking."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+
+    def test_generate_from_visit_creates_consultation_fee(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.assertIsNotNone(invoice.invoice_number)
+        self.assertTrue(invoice.invoice_number.startswith("INV-"))
+        self.assertEqual(invoice.total_amount, 5000)  # default consultation fee
+        self.assertEqual(invoice.line_items.count(), 1)
+        self.assertEqual(invoice.line_items.first().description, "Consultation fee")
+
+    def test_generate_from_visit_includes_dispensed_drugs(self):
+        # Dispense some drugs
+        rx = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+        self.drug.dispense(quantity=10, staff=self.staff, prescription=rx)
+        rx.quantity_dispensed = 10
+        rx.save()
+
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        # Consultation fee (5000) + 10 tablets * 0.50 = 5005
+        self.assertEqual(invoice.total_amount, 5005)
+        self.assertEqual(invoice.line_items.count(), 2)
+
+    def test_generate_from_visit_returns_existing(self):
+        invoice1 = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice2 = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.assertEqual(invoice1.pk, invoice2.pk)
+        self.assertEqual(Invoice.objects.count(), 1)
+
+    def test_record_payment_full(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        payment = invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertTrue(invoice.is_fully_paid)
+        self.assertEqual(invoice.balance_due, 0)
+        self.assertEqual(payment.method, Invoice.PaymentMethod.CASH)
+
+    def test_record_payment_partial(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=2000, method=Invoice.PaymentMethod.MOBILE_MONEY, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 2000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+    def test_record_payment_multiple_partials(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=2000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        invoice.record_payment(
+            amount=3000, method=Invoice.PaymentMethod.MOBILE_MONEY, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.payments.count(), 2)
+
+    def test_record_payment_exceeds_balance_raises(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        with self.assertRaises(ValueError):
+            invoice.record_payment(
+                amount=6000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+            )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 0)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.UNPAID)
+
+    def test_record_payment_zero_raises(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        with self.assertRaises(ValueError):
+            invoice.record_payment(
+                amount=0, method=Invoice.PaymentMethod.CASH, staff=self.staff
+            )
+
+
+class BillingDashboardTests(TestCase):
+    """UR-15/UR-16/UR-18: billing landing page."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_summary(self):
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Billing & Payments")
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_dashboard_shows_outstanding(self):
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Outstanding balances")
+        self.assertContains(response, "5000")
+
+
+class BillingInvoiceViewTests(TestCase):
+    """UR-15/UR-16/UR-17: invoice generation, detail, payment, receipt."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+
+    def test_generate_invoice_requires_login(self):
+        self.client.logout()
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[self.visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_generate_invoice_creates_and_redirects(self):
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[self.visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(visit=self.visit)
+        self.assertRedirects(
+            response, reverse("core:billing_invoice_detail", args=[invoice.pk])
+        )
+
+    def test_invoice_detail_page_loads(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.get(
+            reverse("core:billing_invoice_detail", args=[invoice.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Consultation fee")
+        self.assertContains(response, "Record payment")
+
+    def test_record_payment_via_view(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "5000",
+                "method": "cash",
+                "reference": "Receipt 001",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.payments.count(), 1)
+        self.assertEqual(invoice.payments.first().reference, "Receipt 001")
+
+    def test_record_partial_payment_via_view(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "2000",
+                "method": "mobile_money",
+                "reference": "MTN-12345",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 2000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+    def test_cannot_pay_more_than_balance(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "6000",
+                "method": "cash",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "exceeds the outstanding balance")
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 0)
+
+    def test_invoice_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_invoice_list"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_invoice_list_shows_invoices(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.get(reverse("core:billing_invoice_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, invoice.invoice_number)
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_invoice_list_filter_by_status(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        response = self.client.get(
+            reverse("core:billing_invoice_list"), {"status": "paid"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, invoice.invoice_number)
+
+    def test_receipt_page_loads(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        response = self.client.get(
+            reverse("core:billing_invoice_receipt", args=[invoice.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Receipt")
+        self.assertContains(response, "Nakato Aisha")
+        self.assertContains(response, "5000")
+
+
+class BillingDailySummaryTests(TestCase):
+    """UR-18: daily collections summary."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+
+    def test_daily_summary_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_daily_summary_shows_totals(self):
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Daily collections summary")
+        self.assertContains(response, "5000")
+
+    def test_daily_summary_shows_method_breakdown(self):
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cash")
+        self.assertContains(response, "Mobile Money")
+
+
+class PaymentFormTests(TestCase):
+    """UR-16 / FR-8: payment form validation."""
+
+    def setUp(self):
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit)
+
+    def test_balance_due_is_initial(self):
+        form = PaymentForm(invoice=self.invoice)
+        self.assertEqual(form.fields["amount"].initial, 5000)
+
+    def test_valid_full_payment(self):
+        form = PaymentForm(
+            {"amount": "5000", "method": "cash"}, invoice=self.invoice
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_valid_partial_payment(self):
+        form = PaymentForm(
+            {"amount": "2000", "method": "mobile_money"}, invoice=self.invoice
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_rejects_more_than_balance(self):
+        form = PaymentForm(
+            {"amount": "6000", "method": "cash"}, invoice=self.invoice
+        )
+        self.assertFalse(form.is_valid())
+
+
+class AppointmentModelTests(TestCase):
+    """UR-24 / FR-10: Appointment model behaviour."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up for malaria treatment review",
+            status=Appointment.Status.SCHEDULED,
+        )
+
+    def test_is_upcoming(self):
+        self.assertTrue(self.appointment.is_upcoming)
+        self.appointment.status = Appointment.Status.ATTENDED
+        self.assertFalse(self.appointment.is_upcoming)
+
+    def test_can_send_reminder(self):
+        self.assertTrue(self.appointment.can_send_reminder)
+        # No phone number -> cannot remind
+        self.appointment.patient.phone_number = ""
+        self.appointment.patient.save()
+        self.assertFalse(self.appointment.can_send_reminder)
+        # Restore phone number
+        self.appointment.patient.phone_number = "0772123456"
+        self.appointment.patient.save()
+        # Cancelled -> cannot remind
+        self.appointment.status = Appointment.Status.CANCELLED
+        self.assertFalse(self.appointment.can_send_reminder)
+
+    def test_str(self):
+        self.assertIn("Nakato Aisha", str(self.appointment))
+
+
+class AppointmentFormTests(TestCase):
+    """UR-24: appointment form validation."""
+
+    def test_rejects_past_date(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        past = (timezone.now() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+        form = AppointmentForm(
+            data={
+                "appointment_date": past,
+                "reason": "Review",
+                "notes": "",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("must be in the future", form.errors["appointment_date"][0])
+
+    def test_accepts_future_date(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        future = (timezone.now() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+        form = AppointmentForm(
+            data={
+                "appointment_date": future,
+                "reason": "Follow-up",
+                "notes": "Check BP",
+            }
+        )
+        self.assertTrue(form.is_valid())
+
+
+class AppointmentViewTests(TestCase):
+    """UR-24 / FR-10: appointment scheduling views."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.user = User.objects.create_user("receptionist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Rita Nansubuga", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="receptionist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.future_time = (timezone.now() + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M")
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up",
+            status=Appointment.Status.SCHEDULED,
+            scheduled_by=self.staff,
+        )
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:appointment_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_appointments(self):
+        response = self.client.get(reverse("core:appointment_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_create_page_loads(self):
+        response = self.client.get(
+            reverse("core:appointment_create", args=[self.patient.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Schedule appointment")
+
+    def test_create_schedules_appointment(self):
+        response = self.client.post(
+            reverse("core:appointment_create", args=[self.patient.pk]),
+            {
+                "appointment_date": self.future_time,
+                "reason": "Follow-up for malaria",
+                "notes": "",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Appointment.objects.count(), 2)  # setup + newly created
+
+    def test_detail_shows_appointment(self):
+        response = self.client.get(
+            reverse("core:appointment_detail", args=[self.appointment.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nakato Aisha")
+        self.assertContains(response, "Follow-up")
+
+    def test_cancel_appointment(self):
+        response = self.client.get(
+            reverse("core:appointment_cancel", args=[self.appointment.pk])
+        )
+        self.assertRedirects(response, reverse("core:appointment_dashboard"))
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.CANCELLED)
+
+    def test_mark_attended(self):
+        response = self.client.get(
+            reverse("core:appointment_mark_attended", args=[self.appointment.pk])
+        )
+        self.assertRedirects(response, reverse("core:appointment_dashboard"))
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.ATTENDED)
+
+
+class AppointmentSMSReminderTests(TestCase):
+    """UR-24 / FR-10: SMS reminder sending via Africa's Talking."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.user = User.objects.create_user("receptionist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Rita Nansubuga", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="receptionist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up",
+            status=Appointment.Status.SCHEDULED,
+            scheduled_by=self.staff,
+        )
+
+    def test_send_reminder_creates_sms_record(self):
+        response = self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(SMSReminder.objects.count(), 1)
+        reminder = SMSReminder.objects.first()
+        self.assertEqual(reminder.phone_number, "0772123456")
+        self.assertIn("Nakato Aisha", reminder.message)
+        # In simulated mode (no AT_API_KEY), status is "sent"
+        self.assertIn(reminder.status, ["sent", "failed"])
+
+    def test_send_reminder_updates_status_to_reminded(self):
+        self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.REMINDED)
+
+    def test_cannot_remind_without_phone(self):
+        self.patient.phone_number = ""
+        self.patient.save()
+        response = self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.assertRedirects(
+            response, reverse("core:appointment_detail", args=[self.appointment.pk])
+        )
+        self.assertEqual(SMSReminder.objects.count(), 0)
+
+    def test_sms_service_simulated_success(self):
+        result = send_sms("0772123456", "Test message")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["message_id"], "SIMULATED")
+
+    def test_build_reminder_message(self):
+        message = build_reminder_message(self.appointment)
+        self.assertIn("Nakato Aisha", message)
+        self.assertIn("Follow-up", message)
+        self.assertIn("Community Health Clinic", message)
+
+
+class ReportingServiceTests(TestCase):
+    """UR-19 / FR-11: reporting aggregation functions."""
+
+    def setUp(self):
+        from datetime import date, timedelta
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(
+            patient=self.patient,
+            visit_type=Visit.VisitType.OUTPATIENT,
+            diagnosis="Malaria",
+        )
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.rx = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+        self.drug.dispense(quantity=10, prescription=self.rx)
+        self.rx.quantity_dispensed = 10
+        self.rx.save()
+
+        self.invoice = Invoice.generate_from_visit(self.visit)
+        self.invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH
+        )
+
+    def test_patient_volume_report(self):
+        data = patient_volume_report()
+        self.assertGreaterEqual(data["total_visits"], 1)
+        self.assertGreaterEqual(data["unique_patients"], 1)
+        self.assertIn("by_day", data)
+        self.assertIn("by_visit_type", data)
+
+    def test_diagnosis_report(self):
+        diagnoses = diagnosis_report()
+        self.assertTrue(any(d["diagnosis"] == "Malaria" for d in diagnoses))
+
+    def test_revenue_report(self):
+        data = revenue_report()
+        self.assertGreaterEqual(data["total_billed"], 5000)
+        self.assertGreaterEqual(data["total_collected"], 5000)
+        self.assertIn("by_method", data)
+
+    def test_drug_usage_report(self):
+        drugs = drug_usage_report()
+        self.assertTrue(any(d["drug"] == "Amoxicillin" for d in drugs))
+        amox = next(d for d in drugs if d["drug"] == "Amoxicillin")
+        self.assertEqual(amox["quantity_dispensed"], 10)
+
+
+class ReportingViewTests(TestCase):
+    """UR-19 / UR-23 / FR-11: reporting views."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(
+            patient=self.patient, diagnosis="Malaria"
+        )
+
+    def test_reporting_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:reporting_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_reporting_dashboard_loads(self):
+        response = self.client.get(reverse("core:reporting_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Reporting & Analytics")
+
+    def test_patient_volumes_report_loads(self):
+        response = self.client.get(reverse("core:report_patient_volumes"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient volumes")
+
+    def test_diagnoses_report_loads(self):
+        response = self.client.get(reverse("core:report_diagnoses"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Common diagnoses")
+
+    def test_revenue_report_loads(self):
+        response = self.client.get(reverse("core:report_revenue"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Revenue report")
+
+    def test_drug_usage_report_loads(self):
+        response = self.client.get(reverse("core:report_drug_usage"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Drug usage")
+
+    def test_csv_export_patient_volumes(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["patient_volumes"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Date", response.content.decode())
+
+    def test_csv_export_diagnoses(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["diagnoses"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Diagnosis", response.content.decode())
+
+    def test_csv_export_revenue(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["revenue"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Billed", response.content.decode())
+
+    def test_csv_export_drug_usage(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["drug_usage"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Drug", response.content.decode())
+
+    def test_csv_export_unknown_type(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["unknown"])
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class SyncServiceTests(TestCase):
+    """FR-13 / SDD 4.3: sync service behaviour."""
+
+    def setUp(self):
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+
+    def test_new_records_are_unsynced(self):
+        self.assertFalse(self.patient.synced)
+        unsynced = get_all_unsynced()
+        self.assertIn("Patient", unsynced)
+        self.assertEqual(len(unsynced["Patient"]), 1)
+
+    def test_push_unsynced_marks_records_synced(self):
+        result = push_unsynced()
+        self.assertIn("Patient", result)
+        self.assertEqual(result["Patient"], 1)
+        self.patient.refresh_from_db()
+        self.assertTrue(self.patient.synced)
+
+    def test_sync_all_returns_summary(self):
+        result = sync_all()
+        self.assertIn("pushed", result)
+        self.assertIn("pulled", result)
+        self.assertIn("timestamp", result)
+        self.assertIn("Patient", result["pushed"])
+
+    def test_pull_updates_applies_new_records(self):
+        from .sync import _serialize_record
+
+        remote_patient = Patient.objects.create(
+            full_name="Kato John", sex="M", estimated_age=45
+        )
+        remote_patient.synced = True
+        remote_patient.save()
+
+        payload = {"Patient": [_serialize_record(remote_patient)]}
+        applied = pull_updates(payload)
+        self.assertIn("Patient", applied)
+
+    def test_pull_updates_skips_older_records(self):
+        from .sync import _serialize_record
+
+        self.patient.last_modified = timezone.now()
+        self.patient.save()
+
+        from datetime import timedelta
+
+        remote_data = _serialize_record(self.patient)
+        remote_data["last_modified"] = (
+            timezone.now() - timedelta(days=1)
+        ).isoformat()
+
+        applied = pull_updates({"Patient": [remote_data]})
+        self.assertEqual(applied.get("Patient", 0), 0)
+
+
+class SyncViewTests(TestCase):
+    """FR-13: sync views and API endpoints."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+
+    def test_sync_status_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_sync_status_shows_pending(self):
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sync status")
+        self.assertContains(response, "1")
+
+    def test_sync_run_pushes_records(self):
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("pushed", data)
+        self.assertIn("Patient", data["pushed"])
+
+    def test_sync_api_push_returns_unsynced(self):
+        response = self.client.get(reverse("core:sync_api_push"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("records", data)
+        self.assertIn("Patient", data["records"])
+
+    def test_sync_api_pull_applies_updates(self):
+        from .sync import _serialize_record
+
+        remote_patient = Patient.objects.create(
+            full_name="Remote Patient", sex="M", estimated_age=50
+        )
+        remote_patient.synced = True
+        remote_patient.save()
+
+        payload = {"Patient": [_serialize_record(remote_patient)]}
+        # Convert UUIDs to strings for JSON serialization
+        payload["Patient"][0]["id"] = str(payload["Patient"][0]["id"])
+        response = self.client.post(
+            reverse("core:sync_api_pull"),
+            data=__import__("json").dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("applied", data)
+
+    def test_sync_api_pull_rejects_get(self):
+        response = self.client.get(reverse("core:sync_api_pull"))
+        self.assertEqual(response.status_code, 405)
+
+    def test_pwa_manifest(self):
+        response = self.client.get(reverse("core:pwa_manifest"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        data = response.json()
+        self.assertEqual(data["name"], "Clinic System")
+
+    def test_pwa_service_worker(self):
+        response = self.client.get(reverse("core:pwa_service_worker"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/javascript")
+        self.assertIn("CACHE_NAME", response.content.decode())
+
+
+class EndToEndWorkflowTests(TestCase):
+    """Day 13 UAT: full end-to-end workflow — registration through billing and reporting.
+
+    Simulates the complete patient journey:
+    register patient → record visit → prescribe → dispense → generate invoice →
+    record payment → verify reports reflect the data.
+    """
+
+    def setUp(self):
+        # Receptionist registers the patient
+        self.receptionist_user = User.objects.create_user(
+            "receptionist", password="TestPass123!"
+        )
+        self.receptionist = Staff.objects.create(
+            user=self.receptionist_user,
+            name="Rita Nansubuga",
+            role=Staff.Role.RECEPTIONIST,
+        )
+
+        # Nurse records the visit
+        self.nurse_user = User.objects.create_user("nurse", password="TestPass123!")
+        self.nurse = Staff.objects.create(
+            user=self.nurse_user, name="Grace Achieng", role=Staff.Role.NURSE
+        )
+
+        # Pharmacist dispenses
+        self.pharmacist_user = User.objects.create_user(
+            "pharmacist", password="TestPass123!"
+        )
+        self.pharmacist = Staff.objects.create(
+            user=self.pharmacist_user,
+            name="Sarah Nakato",
+            role=Staff.Role.PHARMACIST,
+        )
+
+        # Cashier handles billing
+        self.cashier_user = User.objects.create_user("cashier", password="TestPass123!")
+        self.cashier = Staff.objects.create(
+            user=self.cashier_user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+
+        # Admin views reports
+        self.admin_user = User.objects.create_user("admin", password="TestPass123!")
+        self.admin = Staff.objects.create(
+            user=self.admin_user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+
+        # Stock a drug for dispensing
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_full_patient_journey(self):
+        """UR-1 → UR-7 → UR-8 → UR-12 → UR-15 → UR-16 → UR-19."""
+        # Step 1: Receptionist registers a new patient (UR-1)
+        self.client.login(username="receptionist", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:patient_register"),
+            {
+                "full_name": "Nakato Aisha",
+                "sex": "F",
+                "estimated_age": "34",
+                "phone_number": "0772123456",
+                "village": "Kyebando",
+                "parish": "Kawempe",
+                "district": "Kampala",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        patient = Patient.objects.get(full_name="Nakato Aisha")
+        self.assertTrue(patient.patient_card_no.startswith("CL-"))
+
+        # Step 2: Nurse records a visit with vitals and diagnosis (UR-7)
+        self.client.login(username="nurse", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Fever and headache for 3 days",
+                "diagnosis": "Malaria",
+                "blood_pressure": "110/70",
+                "pulse": "88",
+                "temperature": "38.5",
+                "weight": "60.0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        visit = Visit.objects.get(patient=patient)
+        self.assertEqual(visit.diagnosis, "Malaria")
+        self.assertEqual(visit.vitals["temperature"], "38.5")
+
+        # Step 3: Nurse prescribes a drug that is in stock (UR-8)
+        response = self.client.post(
+            reverse("core:visit_prescription_create", args=[visit.pk]),
+            {
+                "drug": self.drug.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "21",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        rx = Prescription.objects.get(visit=visit)
+        self.assertEqual(rx.quantity_prescribed, 21)
+
+        # Step 4: Pharmacist dispenses the full quantity (UR-12)
+        self.client.login(username="pharmacist", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[rx.pk]),
+            {"quantity_to_dispense": "21"},
+        )
+        self.assertEqual(response.status_code, 302)
+        rx.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(rx.quantity_dispensed, 21)
+        self.assertEqual(rx.dispensed_by, self.pharmacist)
+        self.assertEqual(self.drug.stock_quantity, 79)  # 100 - 21 auto-decremented
+
+        # Step 5: Cashier generates invoice from visit (UR-15)
+        self.client.login(username="cashier", password="TestPass123!")
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(visit=visit)
+        # Consultation fee (5000) + 21 tablets * 0.50 = 5010.50
+        self.assertEqual(invoice.total_amount, 5010.50)
+        self.assertEqual(invoice.line_items.count(), 2)
+
+        # Step 6: Cashier records payment via mobile money (UR-16)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "5010.50",
+                "method": "mobile_money",
+                "reference": "MTN-987654",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.amount_paid, 5010.50)
+        self.assertEqual(invoice.balance_due, 0)
+
+        # Step 7: Admin views reports reflecting the data (UR-19)
+        self.client.login(username="admin", password="TestPass123!")
+        response = self.client.get(reverse("core:report_patient_volumes"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient volumes")
+
+        response = self.client.get(reverse("core:report_diagnoses"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Malaria")
+
+        response = self.client.get(reverse("core:report_revenue"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "5010.5")
+
+        response = self.client.get(reverse("core:report_drug_usage"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_partial_payment_workflow(self):
+        """UR-16: partial payment leaves outstanding balance tracked."""
+        # Register patient
+        self.client.login(username="receptionist", password="TestPass123!")
+        self.client.post(
+            reverse("core:patient_register"),
+            {"full_name": "Kato John", "sex": "M", "estimated_age": "45"},
+        )
+        patient = Patient.objects.get(full_name="Kato John")
+
+        # Record visit
+        self.client.login(username="nurse", password="TestPass123!")
+        self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Cough",
+                "diagnosis": "URTI",
+            },
+        )
+        visit = Visit.objects.get(patient=patient)
+
+        # Generate invoice
+        self.client.login(username="cashier", password="TestPass123!")
+        self.client.get(reverse("core:billing_invoice_generate", args=[visit.pk]))
+        invoice = Invoice.objects.get(visit=visit)
+
+        # Partial payment
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {"amount": "2000", "method": "cash", "reference": "Partial-001"},
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+        # Outstanding balance visible on billing dashboard (UR-4)
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Outstanding balances")
+        self.assertContains(response, "Kato John")
+
+    def test_low_stock_alert_after_dispensing(self):
+        """UR-13: dispensing below reorder level triggers low-stock alert."""
+        # Set up a drug with low stock
+        self.drug.stock_quantity = 15
+        self.drug.reorder_level = 10
+        self.drug.save()
+
+        # Register patient and create visit
+        self.client.login(username="receptionist", password="TestPass123!")
+        self.client.post(
+            reverse("core:patient_register"),
+            {"full_name": "Low Stock Patient", "sex": "F", "estimated_age": "30"},
+        )
+        patient = Patient.objects.get(full_name="Low Stock Patient")
+
+        self.client.login(username="nurse", password="TestPass123!")
+        self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Infection",
+                "diagnosis": "Bacterial infection",
+            },
+        )
+        visit = Visit.objects.get(patient=patient)
+
+        # Prescribe 10 tablets (leaves 5, below reorder level of 10)
+        self.client.post(
+            reverse("core:visit_prescription_create", args=[visit.pk]),
+            {
+                "drug": self.drug.pk,
+                "dosage": "500mg",
+                "frequency": "2 times a day",
+                "duration_days": "5",
+                "quantity_prescribed": "10",
+            },
+        )
+        rx = Prescription.objects.get(visit=visit)
+
+        # Dispense
+        self.client.login(username="pharmacist", password="TestPass123!")
+        self.client.post(
+            reverse("core:pharmacy_dispense", args=[rx.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 5)
+        self.assertTrue(self.drug.is_low_stock)
+
+        # Pharmacy dashboard shows low-stock alert
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Low stock alerts")
+        self.assertContains(response, "Amoxicillin")
+
+
+class OfflineOnlineTransitionTests(TestCase):
+    """Day 13 UAT: simulate offline/online transitions (FR-12, FR-13).
+
+    Verifies that records created while "offline" are queued as unsynced,
+    then pushed to the central server when connectivity is restored.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+    def test_offline_records_queued_then_synced(self):
+        """FR-12/FR-13: records created offline are queued and pushed when online."""
+        # Simulate offline: create records (they start as unsynced)
+        patient = Patient.objects.create(
+            full_name="Offline Patient", sex="M", estimated_age=40
+        )
+        visit = Visit.objects.create(
+            patient=patient, diagnosis="Malaria", chief_complaint="Fever"
+        )
+        drug = Drug.objects.create(
+            name="Quinine",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+        rx = Prescription.objects.create(
+            visit=visit,
+            drug=drug,
+            dosage="300mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+        # All records should be unsynced (queued locally)
+        self.assertFalse(patient.synced)
+        self.assertFalse(visit.synced)
+        self.assertFalse(rx.synced)
+
+        # Sync status page shows pending records
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sync status")
+
+        # Simulate connectivity restored: run sync
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("pushed", data)
+        self.assertIn("Patient", data["pushed"])
+        self.assertIn("Visit", data["pushed"])
+        self.assertIn("Prescription", data["pushed"])
+
+        # All records now marked as synced
+        patient.refresh_from_db()
+        visit.refresh_from_db()
+        rx.refresh_from_db()
+        self.assertTrue(patient.synced)
+        self.assertTrue(visit.synced)
+        self.assertTrue(rx.synced)
+
+    def test_offline_dispensing_then_sync(self):
+        """FR-12: dispensing works offline; stock movement syncs when online."""
+        # Create drug and dispense while "offline"
+        drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=20,
+            unit_price="0.10",
+        )
+        patient = Patient.objects.create(
+            full_name="Offline Dispense", sex="F", estimated_age=28
+        )
+        visit = Visit.objects.create(patient=patient)
+        rx = Prescription.objects.create(
+            visit=visit,
+            drug=drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+        # Dispense offline
+        drug.dispense(quantity=10, staff=self.staff, prescription=rx)
+        rx.quantity_dispensed = 10
+        rx.save()
+        drug.refresh_from_db()
+        self.assertEqual(drug.stock_quantity, 90)
+
+        # Stock movement is queued for sync
+        movement = StockMovement.objects.get(drug=drug, prescription=rx)
+        self.assertFalse(movement.synced)
+
+        # Sync when online
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        movement.refresh_from_db()
+        self.assertTrue(movement.synced)
+
+    def test_pwa_offline_assets_available(self):
+        """FR-12: PWA assets are served for offline use."""
+        # Manifest
+        response = self.client.get(reverse("core:pwa_manifest"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+
+        # Service worker
+        response = self.client.get(reverse("core:pwa_service_worker"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/javascript")
+        self.assertIn("CACHE_NAME", response.content.decode())
+        self.assertIn("install", response.content.decode())
+        self.assertIn("fetch", response.content.decode())

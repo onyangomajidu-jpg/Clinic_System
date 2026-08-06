@@ -37,16 +37,22 @@
         </a>
       {% endif %}
       {% if can_manage_pharmacy %}
-        <div class="menu-card">
+        <a class="menu-card" href="{% url 'core:pharmacy_dashboard' %}">
           <strong>Pharmacy</strong>
-          <span class="muted">View/manage drug stock (coming soon)</span>
-        </div>
+          <span class="muted">Dispense prescriptions and manage drug stock</span>
+        </a>
       {% endif %}
       {% if can_manage_billing %}
-        <div class="menu-card">
+        <a class="menu-card" href="{% url 'core:billing_dashboard' %}">
           <strong>Billing</strong>
-          <span class="muted">Invoices and payments (coming soon)</span>
-        </div>
+          <span class="muted">Generate invoices and record payments</span>
+        </a>
+      {% endif %}
+      {% if can_manage_patients %}
+        <a class="menu-card" href="{% url 'core:appointment_dashboard' %}">
+          <strong>Appointments</strong>
+          <span class="muted">Schedule follow-ups and send SMS reminders</span>
+        </a>
       {% endif %}
       {% if can_manage_lab %}
         <div class="menu-card">
@@ -59,6 +65,12 @@
           <strong>Staff accounts</strong>
           <span class="muted">Manage clinic staff and roles (coming soon)</span>
         </div>
+      {% endif %}
+      {% if can_manage_billing %}
+        <a class="menu-card" href="{% url 'core:reporting_dashboard' %}">
+          <strong>Reports & Analytics</strong>
+          <span class="muted">Patient volumes, diagnoses, revenue, drug usage</span>
+        </a>
       {% endif %}
     </div>
 

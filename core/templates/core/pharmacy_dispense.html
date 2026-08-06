@@ -1,0 +1,68 @@
+{% extends "accounts/base.html" %}
+{% block title %}Dispense - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:pharmacy_dashboard' %}">Pharmacy</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <h1 style="margin-top:0; font-size:1.3rem;">Dispense medication</h1>
+    <p class="muted" style="margin-top:-6px;">
+      <a href="{% url 'core:patient_visits' prescription.visit.patient.pk %}">{{ prescription.visit.patient.full_name }}</a>
+      &middot; {{ prescription.drug.name }}
+      &middot; {{ prescription.dosage }} {{ prescription.frequency }} for {{ prescription.duration_days }} days
+    </p>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card-head" style="margin-top:18px;">
+      <div>
+        <div class="muted">Prescription details</div>
+        <div style="margin-top:6px;">
+          <strong>Prescribed:</strong> {{ prescription.quantity_prescribed }} {{ prescription.drug.unit }}(s)<br>
+          <strong>Already dispensed:</strong> {{ prescription.quantity_dispensed }} {{ prescription.drug.unit }}(s)<br>
+          <strong>Remaining:</strong> {{ prescription.remaining_quantity }} {{ prescription.drug.unit }}(s)<br>
+          <strong>Stock available:</strong> {{ prescription.drug.stock_quantity }} {{ prescription.drug.unit }}(s)
+        </div>
+      </div>
+      {% if prescription.drug.is_low_stock %}
+        <span class="badge badge-referred">Low stock</span>
+      {% endif %}
+    </div>
+
+    <form method="post" style="margin-top:18px;">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="error">{{ form.non_field_errors }}</div>
+      {% endif %}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}
+          <span class="hint">{{ field.help_text }}</span>
+        {% endif %}
+        {% if field.errors %}
+          <span class="field-error">{{ field.errors }}</span>
+        {% endif %}
+      {% endfor %}
+      <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
+        <button class="btn-primary" type="submit">Dispense</button>
+        <a class="btn-secondary" href="{% url 'core:pharmacy_dashboard' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</main>
+{% endblock %}

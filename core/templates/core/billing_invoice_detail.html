@@ -1,0 +1,160 @@
+{% extends "accounts/base.html" %}
+{% block title %}Invoice {{ invoice.invoice_number }} - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:billing_dashboard' %}">Billing</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Invoice <span class="mono">{{ invoice.invoice_number|default:"&mdash;" }}</span></h1>
+        <p class="muted" style="margin-top:-6px;">
+          <a href="{% url 'core:patient_visits' invoice.patient.pk %}">{{ invoice.patient.full_name }}</a>
+          &middot; {{ invoice.created_at|date:"d M Y H:i" }}
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:billing_invoice_receipt' invoice.pk %}">Print receipt</a>
+        <a class="btn-secondary" href="{% url 'core:billing_invoice_list' %}">All invoices</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <!-- Invoice summary -->
+    <div class="card-head" style="margin-top:18px;">
+      <div>
+        <div class="muted">Payment status</div>
+        <div style="margin-top:6px;">
+          <strong>Total:</strong> UGX {{ invoice.total_amount }}<br>
+          <strong>Paid:</strong> UGX {{ invoice.amount_paid }}<br>
+          <strong>Balance due:</strong> UGX {{ invoice.balance_due }}
+        </div>
+      </div>
+      <div>
+        {% if invoice.payment_status == "paid" %}
+          <span class="badge badge-closed">Paid</span>
+        {% elif invoice.payment_status == "partial" %}
+          <span class="badge badge-open">Partial</span>
+        {% else %}
+          <span class="badge badge-referred">Unpaid</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <h2 style="font-size:1rem; margin:20px 0 0;">Line items</h2>
+    {% if invoice.line_items.all %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Unit price</th>
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in invoice.line_items.all %}
+            <tr>
+              <td>{{ item.description }}</td>
+              <td>{{ item.quantity }}</td>
+              <td>{{ item.unit_price }}</td>
+              <td><strong>{{ item.line_total }}</strong></td>
+            </tr>
+            {% endfor %}
+            <tr>
+              <td colspan="3" style="text-align:right;"><strong>Total</strong></td>
+              <td><strong>{{ invoice.total_amount }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No line items on this invoice.</p>
+    {% endif %}
+
+    <!-- Payment history -->
+    <h2 style="font-size:1rem; margin:20px 0 0;">Payment history</h2>
+    {% if invoice.payments.all %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Amount</th>
+              <th>Method</th>
+              <th>Reference</th>
+              <th>Staff</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in invoice.payments.all %}
+            <tr>
+              <td>{{ p.created_at|date:"d M Y H:i" }}</td>
+              <td><strong>{{ p.amount }}</strong></td>
+              <td>{{ p.get_method_display }}</td>
+              <td>{{ p.reference|default:"&mdash;" }}</td>
+              <td>{{ p.staff.name|default:"&mdash;" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No payments recorded yet.</p>
+    {% endif %}
+
+    <!-- Record payment form (UR-16) -->
+    {% if not invoice.is_fully_paid %}
+      <h2 style="font-size:1rem; margin:20px 0 0;">Record payment</h2>
+      <form method="post" style="margin-top:12px;">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+          <div class="error">{{ form.non_field_errors }}</div>
+        {% endif %}
+        <div class="grid">
+          {% for field in form %}
+            <div class="field">
+              <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}
+                <span class="hint">{{ field.help_text }}</span>
+              {% endif %}
+              {% if field.errors %}
+                <span class="field-error">{{ field.errors }}</span>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
+          <button class="btn-primary" type="submit">Record payment</button>
+        </div>
+      </form>
+    {% else %}
+      <p class="muted" style="margin-top:16px;">
+        <span class="badge badge-closed">Fully paid</span> This invoice has no outstanding balance.
+      </p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:billing_dashboard' %}">&laquo; Back to billing</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,110 @@
+{% extends "accounts/base.html" %}
+{% block title %}Receipt {{ invoice.invoice_number }} - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar no-print">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ request.user.username }}{% if request.user.staff_profile %} &middot; {{ request.user.staff_profile.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'core:billing_invoice_detail' invoice.pk %}">Back to invoice</a>
+    <button type="button" onclick="window.print()">Print</button>
+  </span>
+</header>
+<main>
+  <div class="card patient-card">
+    <div class="card-head">
+      <div>
+        <h1 style="margin:0; font-size:1.2rem;">Clinic System</h1>
+        <div class="muted" style="font-size:0.9rem;">Community Health Clinic</div>
+      </div>
+      <div class="card-no">
+        <div class="muted" style="font-size:0.8rem;">Receipt</div>
+        <strong class="mono">{{ invoice.invoice_number|default:"&mdash;" }}</strong>
+      </div>
+    </div>
+
+    <div class="card-body">
+      <div class="detail">
+        <span class="muted">Patient</span>
+        <strong>{{ invoice.patient.full_name }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Date</span>
+        <strong>{{ invoice.created_at|date:"d M Y H:i" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Card number</span>
+        <strong class="mono">{{ invoice.patient.patient_card_no|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Payment status</span>
+        <strong>{{ invoice.get_payment_status_display }}</strong>
+      </div>
+    </div>
+
+    <h2 style="font-size:1rem; margin:16px 0 0;">Line items</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th>Qty</th>
+            <th>Unit price</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in invoice.line_items.all %}
+          <tr>
+            <td>{{ item.description }}</td>
+            <td>{{ item.quantity }}</td>
+            <td>{{ item.unit_price }}</td>
+            <td>{{ item.line_total }}</td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td colspan="3" style="text-align:right;"><strong>Total</strong></td>
+            <td><strong>{{ invoice.total_amount }}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="font-size:1rem; margin:16px 0 0;">Payments</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Amount</th>
+            <th>Method</th>
+            <th>Reference</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in invoice.payments.all %}
+          <tr>
+            <td>{{ p.created_at|date:"d M Y H:i" }}</td>
+            <td>{{ p.amount }}</td>
+            <td>{{ p.get_method_display }}</td>
+            <td>{{ p.reference|default:"&mdash;" }}</td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td colspan="2" style="text-align:right;"><strong>Total paid</strong></td>
+            <td colspan="2"><strong>{{ invoice.amount_paid }}</strong></td>
+          </tr>
+          <tr>
+            <td colspan="2" style="text-align:right;"><strong>Balance due</strong></td>
+            <td colspan="2"><strong>{{ invoice.balance_due }}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:billing_invoice_detail' invoice.pk %}">&laquo; Back to invoice</a>
+      <button class="btn-primary" type="button" onclick="window.print()">Print receipt</button>
+    </div>
+  </div>
+</main>
+{% endblock %}

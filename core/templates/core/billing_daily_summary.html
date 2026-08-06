@@ -1,0 +1,154 @@
+{% extends "accounts/base.html" %}
+{% block title %}Daily Summary - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:billing_dashboard' %}">Billing</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Daily collections summary</h1>
+        <p class="muted" style="margin-top:-6px;">UR-18: end-of-day summary of billing and collections.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:billing_invoice_list' %}">All invoices</a>
+      </div>
+    </div>
+
+    <!-- Date selector -->
+    <form method="get" class="search-form">
+      <input type="date" name="date" class="input" value="{{ selected_date|date:'Y-m-d' }}" style="flex:0 0 220px;">
+      <button class="btn-primary" type="submit" style="padding:10px 18px;">View day</button>
+    </form>
+
+    <!-- Summary cards -->
+    <div class="menu-grid" style="margin-top:18px;">
+      <div class="menu-card">
+        <strong>Total billed</strong>
+        <span class="muted">UGX {{ total_billed }}</span>
+      </div>
+      <div class="menu-card">
+        <strong>Total collected</strong>
+        <span class="muted">UGX {{ total_collected }}</span>
+      </div>
+      <div class="menu-card">
+        <strong>Invoices</strong>
+        <span class="muted">{{ invoice_count }} invoice(s)</span>
+      </div>
+      <div class="menu-card">
+        <strong>Payments</strong>
+        <span class="muted">{{ payment_count }} payment(s)</span>
+      </div>
+    </div>
+
+    <!-- Payment breakdown by method -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Collections by payment method</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for method_label, method_total in method_totals.items %}
+          <tr>
+            <td>{{ method_label }}</td>
+            <td><strong>UGX {{ method_total }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Invoices for the day -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Invoices for {{ selected_date|date:"d M Y" }}</h2>
+    {% if day_invoices %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Patient</th>
+              <th>Total</th>
+              <th>Paid</th>
+              <th>Balance</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in day_invoices %}
+            <tr>
+              <td><span class="mono">{{ inv.invoice_number|default:"&mdash;" }}</span></td>
+              <td>{{ inv.patient.full_name }}</td>
+              <td>{{ inv.total_amount }}</td>
+              <td>{{ inv.amount_paid }}</td>
+              <td>{{ inv.balance_due }}</td>
+              <td>
+                {% if inv.payment_status == "paid" %}
+                  <span class="badge badge-closed">Paid</span>
+                {% elif inv.payment_status == "partial" %}
+                  <span class="badge badge-open">Partial</span>
+                {% else %}
+                  <span class="badge badge-referred">Unpaid</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No invoices for this day.</p>
+    {% endif %}
+
+    <!-- Payments for the day -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Payments for {{ selected_date|date:"d M Y" }}</h2>
+    {% if day_payments %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Patient</th>
+              <th>Amount</th>
+              <th>Method</th>
+              <th>Reference</th>
+              <th>Staff</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in day_payments %}
+            <tr>
+              <td>{{ p.created_at|date:"H:i" }}</td>
+              <td>{{ p.invoice.patient.full_name }}</td>
+              <td><strong>{{ p.amount }}</strong></td>
+              <td>{{ p.get_method_display }}</td>
+              <td>{{ p.reference|default:"&mdash;" }}</td>
+              <td>{{ p.staff.name|default:"&mdash;" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No payments for this day.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:billing_dashboard' %}">&laquo; Back to billing</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

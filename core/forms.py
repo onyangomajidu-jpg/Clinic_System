@@ -1,6 +1,14 @@
 from django import forms
 
-from .models import Patient, Visit
+from .models import (
+    Appointment,
+    Drug,
+    Invoice,
+    InvoiceLineItem,
+    Patient,
+    Prescription,
+    Visit,
+)
 
 
 class PatientRegistrationForm(forms.ModelForm):
@@ -246,3 +254,283 @@ class VisitForm(forms.ModelForm):
         if commit:
             visit.save()
         return visit
+
+
+class PrescriptionForm(forms.ModelForm):
+    """
+    UR-8 / FR-4: clinician adds a prescription linked to pharmacy stock.
+
+    The drug picker only shows drugs that currently have stock, so the
+    clinician cannot unknowingly prescribe an out-of-stock medication. The
+    available stock level is shown inline as help text for each drug.
+    """
+
+    class Meta:
+        model = Prescription
+        fields = [
+            "drug",
+            "dosage",
+            "frequency",
+            "duration_days",
+            "quantity_prescribed",
+        ]
+        widgets = {
+            "drug": forms.Select(attrs={"class": "input"}),
+            "dosage": forms.TextInput(
+                attrs={"class": "input", "placeholder": "e.g. 500mg"}
+            ),
+            "frequency": forms.TextInput(
+                attrs={"class": "input", "placeholder": "e.g. 3 times a day"}
+            ),
+            "duration_days": forms.NumberInput(
+                attrs={"class": "input", "placeholder": "e.g. 7", "min": 1}
+            ),
+            "quantity_prescribed": forms.NumberInput(
+                attrs={"class": "input", "placeholder": "e.g. 21", "min": 1}
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only offer drugs that are currently in stock (FR-4).
+        self.fields["drug"].queryset = Drug.objects.filter(stock_quantity__gt=0)
+        # Show available stock next to each drug name.
+        self.fields["drug"].label_from_instance = (
+            lambda drug: f"{drug.name} ({drug.stock_quantity} {drug.unit}s available)"
+        )
+
+    def clean_quantity_prescribed(self):
+        quantity = self.cleaned_data["quantity_prescribed"]
+        if quantity <= 0:
+            raise forms.ValidationError("Quantity must be at least 1.")
+        return quantity
+
+
+class DispenseForm(forms.Form):
+    """
+    UR-11 / UR-12 / UR-14: pharmacist dispenses against a prescription.
+
+    The quantity to dispense defaults to the remaining balance on the
+    prescription, but can be reduced for partial dispensing (UR-14). The
+    field is validated in the view against both the remaining prescription
+    balance and the available drug stock.
+    """
+
+    quantity_to_dispense = forms.IntegerField(
+        min_value=1,
+        label="Quantity to dispense",
+        widget=forms.NumberInput(attrs={"class": "input", "min": 1}),
+    )
+
+    def __init__(self, *args, prescription=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.prescription = prescription
+        if prescription is not None:
+            self.fields[
+                "quantity_to_dispense"
+            ].initial = prescription.remaining_quantity or 1
+            self.fields["quantity_to_dispense"].widget.attrs["max"] = (
+                prescription.remaining_quantity or 1
+            )
+            self.fields["quantity_to_dispense"].help_text = (
+                f"Remaining on prescription: {prescription.remaining_quantity}. "
+                f"Stock available: {prescription.drug.stock_quantity} {prescription.drug.unit}(s)."
+            )
+
+    def clean_quantity_to_dispense(self):
+        quantity = self.cleaned_data["quantity_to_dispense"]
+        if self.prescription is not None:
+            if quantity > self.prescription.remaining_quantity:
+                raise forms.ValidationError(
+                    f"Cannot dispense more than the remaining "
+                    f"{self.prescription.remaining_quantity} on this prescription."
+                )
+            if quantity > self.prescription.drug.stock_quantity:
+                raise forms.ValidationError(
+                    f"Only {self.prescription.drug.stock_quantity} "
+                    f"{self.prescription.drug.unit}(s) in stock."
+                )
+        return quantity
+
+
+class DrugForm(forms.ModelForm):
+    """
+    Pharmacy stock management: add or edit a drug (UR-13).
+    """
+
+    class Meta:
+        model = Drug
+        fields = [
+            "name",
+            "unit",
+            "stock_quantity",
+            "reorder_level",
+            "unit_price",
+            "expiry_date",
+        ]
+        widgets = {
+            "name": forms.TextInput(attrs={"class": "input"}),
+            "unit": forms.TextInput(
+                attrs={"class": "input", "placeholder": "e.g. tablet, ml, vial"}
+            ),
+            "stock_quantity": forms.NumberInput(
+                attrs={"class": "input", "min": 0}
+            ),
+            "reorder_level": forms.NumberInput(
+                attrs={"class": "input", "min": 0}
+            ),
+            "unit_price": forms.NumberInput(
+                attrs={"class": "input", "min": 0, "step": "0.01"}
+            ),
+            "expiry_date": forms.DateInput(
+                attrs={"class": "input", "type": "date"}, format="%Y-%m-%d"
+            ),
+        }
+
+
+class RestockForm(forms.Form):
+    """
+    UR-13: pharmacist records a stock delivery / restock.
+
+    Only the quantity and an optional note are needed -- the drug is already
+    known from the view context, and the staff member is captured from the
+    logged-in user (UR-10: fast, uncluttered workflow).
+    """
+
+    quantity = forms.IntegerField(
+        min_value=1,
+        label="Quantity received",
+        widget=forms.NumberInput(attrs={"class": "input", "min": 1}),
+    )
+    notes = forms.CharField(
+        required=False,
+        label="Notes (optional)",
+        widget=forms.TextInput(
+            attrs={"class": "input", "placeholder": "e.g. Supplier delivery"}
+        ),
+    )
+
+
+class PaymentForm(forms.Form):
+    """
+    UR-16 / FR-8: record a payment against an invoice.
+
+    Supports cash and mobile money (UR-15 / UR-16). The amount defaults to
+    the outstanding balance but can be reduced for partial payments. The
+    staff member is captured from the logged-in user.
+    """
+
+    amount = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        label="Amount paid",
+        widget=forms.NumberInput(attrs={"class": "input", "min": "0.01", "step": "0.01"}),
+    )
+    method = forms.ChoiceField(
+        choices=Invoice.PaymentMethod.choices,
+        label="Payment method",
+        widget=forms.Select(attrs={"class": "input"}),
+    )
+    reference = forms.CharField(
+        required=False,
+        label="Reference (optional)",
+        widget=forms.TextInput(
+            attrs={
+                "class": "input",
+                "placeholder": "e.g. MTN transaction ID, receipt number",
+            }
+        ),
+    )
+
+    def __init__(self, *args, invoice=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.invoice = invoice
+        if invoice is not None:
+            self.fields["amount"].initial = invoice.balance_due
+            self.fields["amount"].widget.attrs["max"] = str(invoice.balance_due)
+            self.fields["amount"].help_text = (
+                f"Outstanding balance: {invoice.balance_due}"
+            )
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if self.invoice is not None and amount > self.invoice.balance_due:
+            raise forms.ValidationError(
+                f"Amount exceeds the outstanding balance of {self.invoice.balance_due}."
+            )
+        return amount
+
+
+class InvoiceLineItemForm(forms.ModelForm):
+    """
+    UR-15: add a line item to an invoice (e.g. consultation fee, drug, lab).
+    """
+
+    class Meta:
+        model = InvoiceLineItem
+        fields = ["description", "quantity", "unit_price"]
+        widgets = {
+            "description": forms.TextInput(
+                attrs={"class": "input", "placeholder": "e.g. Consultation fee"}
+            ),
+            "quantity": forms.NumberInput(attrs={"class": "input", "min": 1}),
+            "unit_price": forms.NumberInput(
+                attrs={"class": "input", "min": "0", "step": "0.01"}
+            ),
+        }
+
+
+class AppointmentForm(forms.ModelForm):
+    """
+    UR-24 / FR-10: schedule a follow-up appointment for a patient.
+
+    The patient is captured from the view context (UR-10: fast workflow),
+    and the appointment date is required. The reason field offers common
+    follow-up reasons as a datalist.
+    """
+
+    class Meta:
+        model = Appointment
+        fields = ["appointment_date", "reason", "notes"]
+        widgets = {
+            "appointment_date": forms.DateTimeInput(
+                attrs={"class": "input", "type": "datetime-local"},
+                format="%Y-%m-%dT%H:%M",
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": "input",
+                    "list": "common-reasons",
+                    "placeholder": "e.g. Follow-up for malaria treatment review",
+                }
+            ),
+            "notes": forms.Textarea(
+                attrs={
+                    "class": "input",
+                    "rows": 3,
+                    "placeholder": "Additional notes (optional)",
+                }
+            ),
+        }
+
+    COMMON_REASONS = [
+        "Follow-up for malaria treatment review",
+        "Follow-up for hypertension check",
+        "Follow-up for diabetes management",
+        "Antenatal check-up",
+        "Postnatal check-up",
+        "Wound review / dressing change",
+        "Lab results review",
+        "Vaccination",
+        "TB treatment follow-up",
+        "HIV care / ART refill",
+    ]
+
+    def clean_appointment_date(self):
+        appointment_date = self.cleaned_data["appointment_date"]
+        from django.utils import timezone
+
+        if appointment_date < timezone.now():
+            raise forms.ValidationError("Appointment date must be in the future.")
+        return appointment_date

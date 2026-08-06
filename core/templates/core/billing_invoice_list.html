@@ -1,0 +1,104 @@
+{% extends "accounts/base.html" %}
+{% block title %}Invoices - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ request.user.username }}{% if request.user.staff_profile %} &middot; {{ request.user.staff_profile.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:billing_dashboard' %}">Billing</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">All invoices</h1>
+        <p class="muted" style="margin-top:-6px;">View and manage all generated invoices.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:billing_daily_summary' %}">Daily summary</a>
+      </div>
+    </div>
+
+    <!-- Status filter -->
+    <form method="get" class="search-form">
+      <select name="status" class="input" style="flex:0 0 220px;">
+        <option value="">All statuses</option>
+        <option value="paid" {% if status == "paid" %}selected{% endif %}>Paid</option>
+        <option value="partial" {% if status == "partial" %}selected{% endif %}>Partial</option>
+        <option value="unpaid" {% if status == "unpaid" %}selected{% endif %}>Unpaid</option>
+      </select>
+      <button class="btn-primary" type="submit" style="padding:10px 18px;">Filter</button>
+    </form>
+
+    {% if invoices %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Patient</th>
+              <th>Date</th>
+              <th>Total</th>
+              <th>Paid</th>
+              <th>Balance</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in invoices %}
+            <tr>
+              <td><span class="mono">{{ inv.invoice_number|default:"&mdash;" }}</span></td>
+              <td>
+                <a href="{% url 'core:patient_visits' inv.patient.pk %}">{{ inv.patient.full_name }}</a>
+              </td>
+              <td>{{ inv.created_at|date:"d M Y H:i" }}</td>
+              <td>{{ inv.total_amount }}</td>
+              <td>{{ inv.amount_paid }}</td>
+              <td><strong>{{ inv.balance_due }}</strong></td>
+              <td>
+                {% if inv.payment_status == "paid" %}
+                  <span class="badge badge-closed">Paid</span>
+                {% elif inv.payment_status == "partial" %}
+                  <span class="badge badge-open">Partial</span>
+                {% else %}
+                  <span class="badge badge-referred">Unpaid</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:billing_invoice_detail' inv.pk %}">View</a>
+                <a class="btn-small" href="{% url 'core:billing_invoice_receipt' inv.pk %}">Receipt</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if page_obj.has_other_pages %}
+      <div class="pagination">
+        {% if page_obj.has_previous %}
+          <a class="btn-small" href="?page={{ page_obj.previous_page_number }}{% if status %}&status={{ status }}{% endif %}">&laquo; Previous</a>
+        {% endif %}
+        <span class="muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+          <a class="btn-small" href="?page={{ page_obj.next_page_number }}{% if status %}&status={{ status }}{% endif %}">Next &raquo;</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    {% else %}
+      <p class="muted" style="margin-top:18px;">No invoices found. Generate one from a patient's visit.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:billing_dashboard' %}">&laquo; Back to billing</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

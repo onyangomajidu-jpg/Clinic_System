@@ -1,0 +1,45 @@
+{% extends "accounts/base.html" %}
+{% block title %}Reports - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <h1 style="margin-top:0; font-size:1.3rem;">Reporting & Analytics</h1>
+    <p class="muted" style="margin-top:-6px;">UR-19 / FR-11: operational reports over selectable date ranges.</p>
+
+    <div class="menu-grid" style="margin-top:18px;">
+      <a class="menu-card" href="{% url 'core:report_patient_volumes' %}">
+        <strong>Patient volumes</strong>
+        <span class="muted">Visits, unique patients, new registrations</span>
+      </a>
+      <a class="menu-card" href="{% url 'core:report_diagnoses' %}">
+        <strong>Common diagnoses</strong>
+        <span class="muted">Most frequent diagnoses in a period</span>
+      </a>
+      <a class="menu-card" href="{% url 'core:report_revenue' %}">
+        <strong>Revenue</strong>
+        <span class="muted">Billed, collected, by payment method</span>
+      </a>
+      <a class="menu-card" href="{% url 'core:report_drug_usage' %}">
+        <strong>Drug usage</strong>
+        <span class="muted">Dispensed quantities and revenue by drug</span>
+      </a>
+    </div>
+
+    <p class="muted" style="font-size:0.9rem; margin-top:20px;">
+      All reports support date-range filtering and CSV export for district
+      health reporting (UR-23 / DHIS2).
+    </p>
+  </div>
+</main>
+{% endblock %}

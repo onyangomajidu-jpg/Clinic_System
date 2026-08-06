@@ -8,6 +8,7 @@ from .models import (
     Patient,
     Prescription,
     Staff,
+    StockMovement,
     Visit,
 )
 
@@ -81,10 +82,40 @@ class VisitAdmin(admin.ModelAdmin):
 
 @admin.register(Prescription)
 class PrescriptionAdmin(admin.ModelAdmin):
-    list_display = ("visit", "drug", "dosage", "frequency", "duration_days", "quantity_dispensed", "dispensed_by")
+    list_display = (
+        "visit",
+        "drug",
+        "dosage",
+        "frequency",
+        "duration_days",
+        "quantity_prescribed",
+        "quantity_dispensed",
+        "remaining_quantity",
+        "dispensed_by",
+    )
     list_filter = ("drug",)
     search_fields = ("visit__patient__full_name", "drug__name")
     autocomplete_fields = ["visit", "drug", "dispensed_by"]
+
+    @admin.display(description="Remaining")
+    def remaining_quantity(self, obj):
+        return obj.remaining_quantity
+
+
+@admin.register(StockMovement)
+class StockMovementAdmin(admin.ModelAdmin):
+    list_display = (
+        "drug",
+        "movement_type",
+        "quantity",
+        "staff",
+        "balance_after",
+        "created_at",
+    )
+    list_filter = ("movement_type",)
+    search_fields = ("drug__name", "staff__name")
+    autocomplete_fields = ["drug", "prescription", "staff"]
+    date_hierarchy = "created_at"
 
 
 @admin.register(Invoice)

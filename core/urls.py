@@ -23,4 +23,11 @@ urlpatterns = [
     path("pharmacy/drugs/<uuid:pk>/restock/", views.pharmacy_restock, name="pharmacy_restock"),
     path("pharmacy/dispense/<uuid:pk>/", views.pharmacy_dispense, name="pharmacy_dispense"),
     path("pharmacy/movements/", views.pharmacy_stock_movements, name="pharmacy_stock_movements"),
+    # Billing & Payments
+    path("billing/", views.billing_dashboard, name="billing_dashboard"),
+    path("billing/invoices/", views.billing_invoice_list, name="billing_invoice_list"),
+    path("billing/invoices/<uuid:pk>/", views.billing_invoice_detail, name="billing_invoice_detail"),
+    path("billing/invoices/<uuid:pk>/receipt/", views.billing_invoice_receipt, name="billing_invoice_receipt"),
+    path("billing/invoices/generate/<uuid:pk>/", views.billing_invoice_generate, name="billing_invoice_generate"),
+    path("billing/daily-summary/", views.billing_daily_summary, name="billing_daily_summary"),
 ]

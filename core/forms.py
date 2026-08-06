@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Drug, Patient, Prescription, Visit
+from .models import Drug, Invoice, InvoiceLineItem, Patient, Prescription, Visit
 
 
 class PatientRegistrationForm(forms.ModelForm):
@@ -401,3 +401,73 @@ class RestockForm(forms.Form):
             attrs={"class": "input", "placeholder": "e.g. Supplier delivery"}
         ),
     )
+
+
+class PaymentForm(forms.Form):
+    """
+    UR-16 / FR-8: record a payment against an invoice.
+
+    Supports cash and mobile money (UR-15 / UR-16). The amount defaults to
+    the outstanding balance but can be reduced for partial payments. The
+    staff member is captured from the logged-in user.
+    """
+
+    amount = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0.01,
+        label="Amount paid",
+        widget=forms.NumberInput(attrs={"class": "input", "min": "0.01", "step": "0.01"}),
+    )
+    method = forms.ChoiceField(
+        choices=Invoice.PaymentMethod.choices,
+        label="Payment method",
+        widget=forms.Select(attrs={"class": "input"}),
+    )
+    reference = forms.CharField(
+        required=False,
+        label="Reference (optional)",
+        widget=forms.TextInput(
+            attrs={
+                "class": "input",
+                "placeholder": "e.g. MTN transaction ID, receipt number",
+            }
+        ),
+    )
+
+    def __init__(self, *args, invoice=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.invoice = invoice
+        if invoice is not None:
+            self.fields["amount"].initial = invoice.balance_due
+            self.fields["amount"].widget.attrs["max"] = str(invoice.balance_due)
+            self.fields["amount"].help_text = (
+                f"Outstanding balance: {invoice.balance_due}"
+            )
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if self.invoice is not None and amount > self.invoice.balance_due:
+            raise forms.ValidationError(
+                f"Amount exceeds the outstanding balance of {self.invoice.balance_due}."
+            )
+        return amount
+
+
+class InvoiceLineItemForm(forms.ModelForm):
+    """
+    UR-15: add a line item to an invoice (e.g. consultation fee, drug, lab).
+    """
+
+    class Meta:
+        model = InvoiceLineItem
+        fields = ["description", "quantity", "unit_price"]
+        widgets = {
+            "description": forms.TextInput(
+                attrs={"class": "input", "placeholder": "e.g. Consultation fee"}
+            ),
+            "quantity": forms.NumberInput(attrs={"class": "input", "min": 1}),
+            "unit_price": forms.NumberInput(
+                attrs={"class": "input", "min": "0", "step": "0.01"}
+            ),
+        }

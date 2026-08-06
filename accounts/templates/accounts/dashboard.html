@@ -43,10 +43,10 @@
         </a>
       {% endif %}
       {% if can_manage_billing %}
-        <div class="menu-card">
+        <a class="menu-card" href="{% url 'core:billing_dashboard' %}">
           <strong>Billing</strong>
-          <span class="muted">Invoices and payments (coming soon)</span>
-        </div>
+          <span class="muted">Generate invoices and record payments</span>
+        </a>
       {% endif %}
       {% if can_manage_lab %}
         <div class="menu-card">

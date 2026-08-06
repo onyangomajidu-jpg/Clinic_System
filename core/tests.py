@@ -5,12 +5,16 @@ from django.urls import reverse
 from .forms import (
     DispenseForm,
     PatientRegistrationForm,
+    PaymentForm,
     PrescriptionForm,
     VisitForm,
 )
 from .models import (
     Drug,
+    Invoice,
+    InvoiceLineItem,
     Patient,
+    Payment,
     Prescription,
     Staff,
     StockMovement,
@@ -921,3 +925,338 @@ class PharmacyStockMovementsTests(TestCase):
         # Only the restock movement (50 units) is shown, not the dispense (5 units).
         self.assertContains(response, "50 tablet(s)")
         self.assertNotContains(response, "5 tablet(s)")
+
+
+class InvoiceModelTests(TestCase):
+    """UR-15 / UR-16 / FR-7 / FR-8: invoice generation and payment tracking."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+
+    def test_generate_from_visit_creates_consultation_fee(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.assertIsNotNone(invoice.invoice_number)
+        self.assertTrue(invoice.invoice_number.startswith("INV-"))
+        self.assertEqual(invoice.total_amount, 5000)  # default consultation fee
+        self.assertEqual(invoice.line_items.count(), 1)
+        self.assertEqual(invoice.line_items.first().description, "Consultation fee")
+
+    def test_generate_from_visit_includes_dispensed_drugs(self):
+        # Dispense some drugs
+        rx = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+        self.drug.dispense(quantity=10, staff=self.staff, prescription=rx)
+        rx.quantity_dispensed = 10
+        rx.save()
+
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        # Consultation fee (5000) + 10 tablets * 0.50 = 5005
+        self.assertEqual(invoice.total_amount, 5005)
+        self.assertEqual(invoice.line_items.count(), 2)
+
+    def test_generate_from_visit_returns_existing(self):
+        invoice1 = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice2 = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.assertEqual(invoice1.pk, invoice2.pk)
+        self.assertEqual(Invoice.objects.count(), 1)
+
+    def test_record_payment_full(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        payment = invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertTrue(invoice.is_fully_paid)
+        self.assertEqual(invoice.balance_due, 0)
+        self.assertEqual(payment.method, Invoice.PaymentMethod.CASH)
+
+    def test_record_payment_partial(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=2000, method=Invoice.PaymentMethod.MOBILE_MONEY, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 2000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+    def test_record_payment_multiple_partials(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=2000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        invoice.record_payment(
+            amount=3000, method=Invoice.PaymentMethod.MOBILE_MONEY, staff=self.staff
+        )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.payments.count(), 2)
+
+    def test_record_payment_exceeds_balance_raises(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        with self.assertRaises(ValueError):
+            invoice.record_payment(
+                amount=6000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+            )
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 0)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.UNPAID)
+
+    def test_record_payment_zero_raises(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        with self.assertRaises(ValueError):
+            invoice.record_payment(
+                amount=0, method=Invoice.PaymentMethod.CASH, staff=self.staff
+            )
+
+
+class BillingDashboardTests(TestCase):
+    """UR-15/UR-16/UR-18: billing landing page."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_summary(self):
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Billing & Payments")
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_dashboard_shows_outstanding(self):
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Outstanding balances")
+        self.assertContains(response, "5000")
+
+
+class BillingInvoiceViewTests(TestCase):
+    """UR-15/UR-16/UR-17: invoice generation, detail, payment, receipt."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+
+    def test_generate_invoice_requires_login(self):
+        self.client.logout()
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[self.visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_generate_invoice_creates_and_redirects(self):
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[self.visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(visit=self.visit)
+        self.assertRedirects(
+            response, reverse("core:billing_invoice_detail", args=[invoice.pk])
+        )
+
+    def test_invoice_detail_page_loads(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.get(
+            reverse("core:billing_invoice_detail", args=[invoice.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Consultation fee")
+        self.assertContains(response, "Record payment")
+
+    def test_record_payment_via_view(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "5000",
+                "method": "cash",
+                "reference": "Receipt 001",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 5000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.payments.count(), 1)
+        self.assertEqual(invoice.payments.first().reference, "Receipt 001")
+
+    def test_record_partial_payment_via_view(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "2000",
+                "method": "mobile_money",
+                "reference": "MTN-12345",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 2000)
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+    def test_cannot_pay_more_than_balance(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "6000",
+                "method": "cash",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "exceeds the outstanding balance")
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid, 0)
+
+    def test_invoice_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_invoice_list"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_invoice_list_shows_invoices(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        response = self.client.get(reverse("core:billing_invoice_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, invoice.invoice_number)
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_invoice_list_filter_by_status(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        response = self.client.get(
+            reverse("core:billing_invoice_list"), {"status": "paid"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, invoice.invoice_number)
+
+    def test_receipt_page_loads(self):
+        invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+        response = self.client.get(
+            reverse("core:billing_invoice_receipt", args=[invoice.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Receipt")
+        self.assertContains(response, "Nakato Aisha")
+        self.assertContains(response, "5000")
+
+
+class BillingDailySummaryTests(TestCase):
+    """UR-18: daily collections summary."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("cashier", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="cashier", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit, staff=self.staff)
+        self.invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH, staff=self.staff
+        )
+
+    def test_daily_summary_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_daily_summary_shows_totals(self):
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Daily collections summary")
+        self.assertContains(response, "5000")
+
+    def test_daily_summary_shows_method_breakdown(self):
+        response = self.client.get(reverse("core:billing_daily_summary"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cash")
+        self.assertContains(response, "Mobile Money")
+
+
+class PaymentFormTests(TestCase):
+    """UR-16 / FR-8: payment form validation."""
+
+    def setUp(self):
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.invoice = Invoice.generate_from_visit(self.visit)
+
+    def test_balance_due_is_initial(self):
+        form = PaymentForm(invoice=self.invoice)
+        self.assertEqual(form.fields["amount"].initial, 5000)
+
+    def test_valid_full_payment(self):
+        form = PaymentForm(
+            {"amount": "5000", "method": "cash"}, invoice=self.invoice
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_valid_partial_payment(self):
+        form = PaymentForm(
+            {"amount": "2000", "method": "mobile_money"}, invoice=self.invoice
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_rejects_more_than_balance(self):
+        form = PaymentForm(
+            {"amount": "6000", "method": "cash"}, invoice=self.invoice
+        )
+        self.assertFalse(form.is_valid())

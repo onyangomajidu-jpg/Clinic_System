@@ -389,7 +389,13 @@ class StockMovement(SyncedModel):
 
 
 class Invoice(SyncedModel):
-    """UR-15/UR-16: one invoice per visit, covering consultation + drugs + lab tests."""
+    """
+    UR-15/UR-16/UR-17: one invoice per visit, covering consultation + drugs
+    + lab tests, with payment tracking and printable receipts.
+
+    total_amount is the full bill; amount_paid is the running total of all
+    Payment records against this invoice. balance_due = total - paid.
+    """
 
     class PaymentMethod(models.TextChoices):
         CASH = "cash", "Cash"
@@ -401,6 +407,13 @@ class Invoice(SyncedModel):
         PARTIAL = "partial", "Partial"
         UNPAID = "unpaid", "Unpaid"
 
+    invoice_number = models.CharField(
+        max_length=30,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Human-readable invoice number, e.g. INV-2026-0001 (UR-17).",
+    )
     visit = models.OneToOneField(Visit, on_delete=models.CASCADE, related_name="invoice")
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="invoices")
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -411,13 +424,184 @@ class Invoice(SyncedModel):
     payment_status = models.CharField(
         max_length=10, choices=PaymentStatus.choices, default=PaymentStatus.UNPAID
     )
+    created_by = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_invoices",
+        help_text="Staff member who generated the invoice (audit trail, SDD §8).",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["invoice_number"]),
+            models.Index(fields=["payment_status"]),
+            models.Index(fields=["created_at"]),
+        ]
 
     def __str__(self):
-        return f"Invoice for {self.patient.full_name} - {self.total_amount}"
+        return f"Invoice {self.invoice_number or '—'} for {self.patient.full_name} - {self.total_amount}"
 
     @property
     def balance_due(self):
         return self.total_amount - self.amount_paid
+
+    @property
+    def is_fully_paid(self):
+        return self.balance_due <= 0
+
+    @transaction.atomic
+    def record_payment(self, amount, method, staff=None, reference=""):
+        """
+        UR-16 / FR-8: record a payment against this invoice.
+
+        Creates a Payment record, updates amount_paid, and recalculates
+        payment_status (paid / partial / unpaid). The staff member is
+        captured for the audit trail (SDD §8).
+
+        Raises ValueError if the amount is not positive or exceeds the
+        outstanding balance.
+        """
+        if amount <= 0:
+            raise ValueError("Payment amount must be greater than zero.")
+        if amount > self.balance_due:
+            raise ValueError(
+                f"Payment of {amount} exceeds the outstanding balance of {self.balance_due}."
+            )
+
+        payment = Payment.objects.create(
+            invoice=self,
+            amount=amount,
+            method=method,
+            staff=staff,
+            reference=reference,
+        )
+
+        self.amount_paid += amount
+        if self.balance_due <= 0:
+            self.payment_status = self.PaymentStatus.PAID
+        else:
+            self.payment_status = self.PaymentStatus.PARTIAL
+        self.payment_method = method
+        self.save(update_fields=["amount_paid", "payment_status", "payment_method", "last_modified"])
+        return payment
+
+    @classmethod
+    @transaction.atomic
+    def generate_from_visit(cls, visit, staff=None):
+        """
+        UR-15 / FR-7: generate an invoice automatically from a visit.
+
+        Builds line items from:
+        - a consultation fee (fixed, configurable via settings),
+        - any dispensed prescriptions (drug unit_price x quantity_dispensed),
+        - any lab tests (a flat fee per test).
+
+        Returns the created Invoice. If an invoice already exists for the
+        visit, returns the existing one.
+        """
+        existing = Invoice.objects.filter(visit=visit).first()
+        if existing:
+            return existing
+
+        from django.conf import settings
+
+        consultation_fee = getattr(settings, "CONSULTATION_FEE", 5000)
+
+        invoice = Invoice.objects.create(
+            visit=visit,
+            patient=visit.patient,
+            total_amount=0,
+            created_by=staff,
+        )
+
+        # Consultation fee line item
+        InvoiceLineItem.objects.create(
+            invoice=invoice,
+            description="Consultation fee",
+            quantity=1,
+            unit_price=consultation_fee,
+        )
+
+        # Dispensed drugs line items
+        for rx in visit.prescriptions.filter(quantity_dispensed__gt=0):
+            if rx.quantity_dispensed > 0:
+                InvoiceLineItem.objects.create(
+                    invoice=invoice,
+                    description=f"{rx.drug.name} ({rx.dosage})",
+                    quantity=rx.quantity_dispensed,
+                    unit_price=rx.drug.unit_price,
+                )
+
+        # Lab tests line items
+        lab_fee = getattr(settings, "LAB_TEST_FEE", 3000)
+        for lab in visit.lab_tests.all():
+            InvoiceLineItem.objects.create(
+                invoice=invoice,
+                description=f"Lab test: {lab.test_name}",
+                quantity=1,
+                unit_price=lab_fee,
+            )
+
+        # Recalculate total from line items
+        total = sum(
+            (item.quantity * item.unit_price for item in invoice.line_items.all()),
+            0,
+        )
+        invoice.total_amount = total
+        invoice.invoice_number = cls._next_invoice_number()
+        invoice.save(update_fields=["total_amount", "invoice_number", "last_modified"])
+        return invoice
+
+    @staticmethod
+    def _next_invoice_number():
+        """
+        Generate the next invoice number, e.g. INV-2026-0001.
+        """
+        from datetime import date
+
+        year = date.today().year
+        base = Invoice.objects.filter(created_at__year=year).count() + 1
+        while True:
+            candidate = f"INV-{year}-{base:04d}"
+            if not Invoice.objects.filter(invoice_number=candidate).exists():
+                return candidate
+            base += 1
+
+
+class Payment(SyncedModel):
+    """
+    UR-16 / FR-8: individual payment transaction against an invoice.
+
+    A single invoice can have many payments (e.g. partial cash payment
+    today, mobile money balance tomorrow). This model provides the audit
+    trail and supports partial payments and outstanding balance tracking.
+    """
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name="payments")
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    method = models.CharField(max_length=20, choices=Invoice.PaymentMethod.choices)
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="recorded_payments",
+        help_text="Staff member who recorded the payment (audit trail, SDD §8).",
+    )
+    reference = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="e.g. MTN transaction ID, receipt number, or note.",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.amount} via {self.get_method_display()} on {self.invoice}"
 
 
 class InvoiceLineItem(SyncedModel):

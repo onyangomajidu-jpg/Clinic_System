@@ -39,6 +39,7 @@ Design notes tying back to the requirements docs:
 """
 
 from core.models import (
+    Appointment,
     Drug,
     Invoice,
     InvoiceLineItem,
@@ -46,6 +47,7 @@ from core.models import (
     Patient,
     Payment,
     Prescription,
+    SMSReminder,
     Staff,
     StockMovement,
     Visit,
@@ -63,6 +65,8 @@ ROLE_PERMISSIONS = {
         (Invoice, VIEW_ADD_CHANGE),
         (InvoiceLineItem, VIEW_ADD_CHANGE),
         (Payment, VIEW_ADD_CHANGE),
+        (Appointment, VIEW_ADD_CHANGE),
+        (SMSReminder, VIEW_ADD_CHANGE),
     ],
     Staff.Role.NURSE: [
         (Patient, VIEW_ADD_CHANGE),
@@ -105,6 +109,8 @@ ROLE_PERMISSIONS = {
         (Invoice, VIEW_ADD_CHANGE_DELETE),
         (InvoiceLineItem, VIEW_ADD_CHANGE_DELETE),
         (Payment, VIEW_ADD_CHANGE_DELETE),
+        (Appointment, VIEW_ADD_CHANGE_DELETE),
+        (SMSReminder, VIEW_ADD_CHANGE_DELETE),
         (LabTest, VIEW_ADD_CHANGE_DELETE),
         (Staff, VIEW_ADD_CHANGE_DELETE),
     ],

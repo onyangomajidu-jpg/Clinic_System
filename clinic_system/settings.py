@@ -186,3 +186,14 @@ LOGOUT_REDIRECT_URL = 'accounts:login'
 SESSION_COOKIE_AGE = 8 * 60 * 60  # 8 hours
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+# Africa's Talking SMS integration (UR-24 / FR-10 / SDD 6.6)
+# Set AT_API_KEY in the environment (or .env) to enable real SMS sending.
+# Without it, the app runs in simulated mode (messages are logged, not sent).
+AT_API_KEY = os.getenv("AT_API_KEY", "")
+AT_USERNAME = os.getenv("AT_USERNAME", "sandbox")
+CLINIC_NAME = os.getenv("CLINIC_NAME", "Community Health Clinic")
+
+# Billing configuration (UR-15 / FR-7)
+CONSULTATION_FEE = 5000  # UGX
+LAB_TEST_FEE = 3000  # UGX

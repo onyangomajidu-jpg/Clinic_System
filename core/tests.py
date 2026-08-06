@@ -3,6 +3,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .forms import (
+    AppointmentForm,
     DispenseForm,
     PatientRegistrationForm,
     PaymentForm,
@@ -10,16 +11,19 @@ from .forms import (
     VisitForm,
 )
 from .models import (
+    Appointment,
     Drug,
     Invoice,
     InvoiceLineItem,
     Patient,
     Payment,
     Prescription,
+    SMSReminder,
     Staff,
     StockMovement,
     Visit,
 )
+from .services import build_reminder_message, send_sms
 
 
 class PatientRegistrationTests(TestCase):
@@ -1260,3 +1264,229 @@ class PaymentFormTests(TestCase):
             {"amount": "6000", "method": "cash"}, invoice=self.invoice
         )
         self.assertFalse(form.is_valid())
+
+
+class AppointmentModelTests(TestCase):
+    """UR-24 / FR-10: Appointment model behaviour."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up for malaria treatment review",
+            status=Appointment.Status.SCHEDULED,
+        )
+
+    def test_is_upcoming(self):
+        self.assertTrue(self.appointment.is_upcoming)
+        self.appointment.status = Appointment.Status.ATTENDED
+        self.assertFalse(self.appointment.is_upcoming)
+
+    def test_can_send_reminder(self):
+        self.assertTrue(self.appointment.can_send_reminder)
+        # No phone number -> cannot remind
+        self.appointment.patient.phone_number = ""
+        self.appointment.patient.save()
+        self.assertFalse(self.appointment.can_send_reminder)
+        # Restore phone number
+        self.appointment.patient.phone_number = "0772123456"
+        self.appointment.patient.save()
+        # Cancelled -> cannot remind
+        self.appointment.status = Appointment.Status.CANCELLED
+        self.assertFalse(self.appointment.can_send_reminder)
+
+    def test_str(self):
+        self.assertIn("Nakato Aisha", str(self.appointment))
+
+
+class AppointmentFormTests(TestCase):
+    """UR-24: appointment form validation."""
+
+    def test_rejects_past_date(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        past = (timezone.now() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+        form = AppointmentForm(
+            data={
+                "appointment_date": past,
+                "reason": "Review",
+                "notes": "",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("must be in the future", form.errors["appointment_date"][0])
+
+    def test_accepts_future_date(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        future = (timezone.now() + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+        form = AppointmentForm(
+            data={
+                "appointment_date": future,
+                "reason": "Follow-up",
+                "notes": "Check BP",
+            }
+        )
+        self.assertTrue(form.is_valid())
+
+
+class AppointmentViewTests(TestCase):
+    """UR-24 / FR-10: appointment scheduling views."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.user = User.objects.create_user("receptionist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Rita Nansubuga", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="receptionist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.future_time = (timezone.now() + timedelta(days=7)).strftime("%Y-%m-%dT%H:%M")
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up",
+            status=Appointment.Status.SCHEDULED,
+            scheduled_by=self.staff,
+        )
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:appointment_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_appointments(self):
+        response = self.client.get(reverse("core:appointment_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_create_page_loads(self):
+        response = self.client.get(
+            reverse("core:appointment_create", args=[self.patient.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Schedule appointment")
+
+    def test_create_schedules_appointment(self):
+        response = self.client.post(
+            reverse("core:appointment_create", args=[self.patient.pk]),
+            {
+                "appointment_date": self.future_time,
+                "reason": "Follow-up for malaria",
+                "notes": "",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Appointment.objects.count(), 2)  # setup + newly created
+
+    def test_detail_shows_appointment(self):
+        response = self.client.get(
+            reverse("core:appointment_detail", args=[self.appointment.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nakato Aisha")
+        self.assertContains(response, "Follow-up")
+
+    def test_cancel_appointment(self):
+        response = self.client.get(
+            reverse("core:appointment_cancel", args=[self.appointment.pk])
+        )
+        self.assertRedirects(response, reverse("core:appointment_dashboard"))
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.CANCELLED)
+
+    def test_mark_attended(self):
+        response = self.client.get(
+            reverse("core:appointment_mark_attended", args=[self.appointment.pk])
+        )
+        self.assertRedirects(response, reverse("core:appointment_dashboard"))
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.ATTENDED)
+
+
+class AppointmentSMSReminderTests(TestCase):
+    """UR-24 / FR-10: SMS reminder sending via Africa's Talking."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        self.user = User.objects.create_user("receptionist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Rita Nansubuga", role=Staff.Role.RECEPTIONIST
+        )
+        self.client.login(username="receptionist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha",
+            sex="F",
+            estimated_age=34,
+            phone_number="0772123456",
+        )
+        self.appointment = Appointment.objects.create(
+            patient=self.patient,
+            appointment_date=timezone.now() + timedelta(days=7),
+            reason="Follow-up",
+            status=Appointment.Status.SCHEDULED,
+            scheduled_by=self.staff,
+        )
+
+    def test_send_reminder_creates_sms_record(self):
+        response = self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(SMSReminder.objects.count(), 1)
+        reminder = SMSReminder.objects.first()
+        self.assertEqual(reminder.phone_number, "0772123456")
+        self.assertIn("Nakato Aisha", reminder.message)
+        # In simulated mode (no AT_API_KEY), status is "sent"
+        self.assertIn(reminder.status, ["sent", "failed"])
+
+    def test_send_reminder_updates_status_to_reminded(self):
+        self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.appointment.refresh_from_db()
+        self.assertEqual(self.appointment.status, Appointment.Status.REMINDED)
+
+    def test_cannot_remind_without_phone(self):
+        self.patient.phone_number = ""
+        self.patient.save()
+        response = self.client.get(
+            reverse("core:appointment_send_reminder", args=[self.appointment.pk])
+        )
+        self.assertRedirects(
+            response, reverse("core:appointment_detail", args=[self.appointment.pk])
+        )
+        self.assertEqual(SMSReminder.objects.count(), 0)
+
+    def test_sms_service_simulated_success(self):
+        result = send_sms("0772123456", "Test message")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["message_id"], "SIMULATED")
+
+    def test_build_reminder_message(self):
+        message = build_reminder_message(self.appointment)
+        self.assertIn("Nakato Aisha", message)
+        self.assertIn("Follow-up", message)
+        self.assertIn("Community Health Clinic", message)

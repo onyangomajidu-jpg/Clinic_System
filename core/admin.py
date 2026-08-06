@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    Appointment,
     Drug,
     Invoice,
     InvoiceLineItem,
@@ -8,6 +9,7 @@ from .models import (
     Patient,
     Payment,
     Prescription,
+    SMSReminder,
     Staff,
     StockMovement,
     Visit,
@@ -158,3 +160,28 @@ class LabTestAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("test_name", "visit__patient__full_name")
     autocomplete_fields = ["visit"]
+
+
+@admin.register(Appointment)
+class AppointmentAdmin(admin.ModelAdmin):
+    list_display = (
+        "patient",
+        "appointment_date",
+        "reason",
+        "status",
+        "scheduled_by",
+        "created_at",
+    )
+    list_filter = ("status", "appointment_date")
+    search_fields = ("patient__full_name", "patient__patient_card_no", "reason")
+    autocomplete_fields = ["patient", "visit", "scheduled_by"]
+    date_hierarchy = "appointment_date"
+
+
+@admin.register(SMSReminder)
+class SMSReminderAdmin(admin.ModelAdmin):
+    list_display = ("appointment", "phone_number", "status", "provider_message_id", "created_at")
+    list_filter = ("status",)
+    search_fields = ("appointment__patient__full_name", "phone_number")
+    autocomplete_fields = ["appointment"]
+    date_hierarchy = "created_at"

@@ -30,4 +30,11 @@ urlpatterns = [
     path("billing/invoices/<uuid:pk>/receipt/", views.billing_invoice_receipt, name="billing_invoice_receipt"),
     path("billing/invoices/generate/<uuid:pk>/", views.billing_invoice_generate, name="billing_invoice_generate"),
     path("billing/daily-summary/", views.billing_daily_summary, name="billing_daily_summary"),
+    # Appointments & SMS Reminders
+    path("appointments/", views.appointment_dashboard, name="appointment_dashboard"),
+    path("appointments/<uuid:pk>/", views.appointment_detail, name="appointment_detail"),
+    path("appointments/<uuid:pk>/remind/", views.appointment_send_reminder, name="appointment_send_reminder"),
+    path("appointments/<uuid:pk>/cancel/", views.appointment_cancel, name="appointment_cancel"),
+    path("appointments/<uuid:pk>/attended/", views.appointment_mark_attended, name="appointment_mark_attended"),
+    path("patients/<uuid:pk>/appointments/new/", views.appointment_create, name="appointment_create"),
 ]

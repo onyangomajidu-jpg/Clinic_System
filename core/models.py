@@ -641,3 +641,113 @@ class LabTest(SyncedModel):
 
     def __str__(self):
         return f"{self.test_name} ({self.get_status_display()})"
+
+
+class Appointment(SyncedModel):
+    """
+    UR-24 / FR-10 / SDD 6.6: schedule follow-up appointments and send SMS
+    reminders to patients via Africa's Talking gateway.
+
+    Supports the appointment lifecycle: scheduled -> reminded -> attended
+    or cancelled. The patient must have a phone number registered to
+    receive an SMS reminder (UR-24).
+    """
+
+    class Status(models.TextChoices):
+        SCHEDULED = "scheduled", "Scheduled"
+        REMINDED = "reminded", "Reminded"
+        ATTENDED = "attended", "Attended"
+        CANCELLED = "cancelled", "Cancelled"
+        NO_SHOW = "no_show", "No Show"
+
+    patient = models.ForeignKey(
+        Patient, on_delete=models.CASCADE, related_name="appointments"
+    )
+    visit = models.ForeignKey(
+        Visit,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="appointments",
+        help_text="The visit this follow-up appointment was scheduled from.",
+    )
+    appointment_date = models.DateTimeField()
+    reason = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="e.g. Follow-up for malaria treatment review.",
+    )
+    notes = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.SCHEDULED
+    )
+    scheduled_by = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="scheduled_appointments",
+        help_text="Staff member who created the appointment.",
+    )
+
+    class Meta:
+        ordering = ["appointment_date"]
+        indexes = [
+            models.Index(fields=["appointment_date"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.patient.full_name} - {self.appointment_date:%Y-%m-%d %H:%M}"
+
+    @property
+    def is_upcoming(self):
+        return self.appointment_date >= timezone.now() and self.status not in (
+            self.Status.CANCELLED,
+            self.Status.ATTENDED,
+            self.Status.NO_SHOW,
+        )
+
+    @property
+    def can_send_reminder(self):
+        """Patient must have a phone number and appointment not cancelled/attended."""
+        return (
+            bool(self.patient.phone_number)
+            and self.status in (self.Status.SCHEDULED, self.Status.REMINDED)
+            and self.appointment_date >= timezone.now()
+        )
+
+
+class SMSReminder(SyncedModel):
+    """
+    UR-24 / FR-10: log of every SMS reminder sent, with the Africa's Talking
+    API response for troubleshooting and audit.
+
+    Stores the message content, recipient phone, whether delivery succeeded,
+    and the API's message ID when available.
+    """
+
+    appointment = models.ForeignKey(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name="sms_reminders",
+    )
+    phone_number = models.CharField(
+        max_length=20, help_text="Recipient phone number (patient's registered number)."
+    )
+    message = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        default="pending",
+        help_text="pending, sent, failed",
+    )
+    provider_message_id = models.CharField(
+        max_length=100, blank=True, help_text="Africa's Talking message ID."
+    )
+    error_message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"SMS to {self.phone_number} for {self.appointment} - {self.status}"

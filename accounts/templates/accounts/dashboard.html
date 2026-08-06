@@ -48,6 +48,12 @@
           <span class="muted">Generate invoices and record payments</span>
         </a>
       {% endif %}
+      {% if can_manage_patients %}
+        <a class="menu-card" href="{% url 'core:appointment_dashboard' %}">
+          <strong>Appointments</strong>
+          <span class="muted">Schedule follow-ups and send SMS reminders</span>
+        </a>
+      {% endif %}
       {% if can_manage_lab %}
         <div class="menu-card">
           <strong>Lab</strong>

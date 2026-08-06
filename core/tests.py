@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from .forms import (
     AppointmentForm,
@@ -30,6 +31,7 @@ from .reports import (
     revenue_report,
 )
 from .services import build_reminder_message, send_sms
+from .sync import get_all_unsynced, pull_updates, push_unsynced, sync_all
 
 
 class PatientRegistrationTests(TestCase):
@@ -1644,3 +1646,139 @@ class ReportingViewTests(TestCase):
             reverse("core:report_export_csv", args=["unknown"])
         )
         self.assertEqual(response.status_code, 400)
+
+
+class SyncServiceTests(TestCase):
+    """FR-13 / SDD 4.3: sync service behaviour."""
+
+    def setUp(self):
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+
+    def test_new_records_are_unsynced(self):
+        self.assertFalse(self.patient.synced)
+        unsynced = get_all_unsynced()
+        self.assertIn("Patient", unsynced)
+        self.assertEqual(len(unsynced["Patient"]), 1)
+
+    def test_push_unsynced_marks_records_synced(self):
+        result = push_unsynced()
+        self.assertIn("Patient", result)
+        self.assertEqual(result["Patient"], 1)
+        self.patient.refresh_from_db()
+        self.assertTrue(self.patient.synced)
+
+    def test_sync_all_returns_summary(self):
+        result = sync_all()
+        self.assertIn("pushed", result)
+        self.assertIn("pulled", result)
+        self.assertIn("timestamp", result)
+        self.assertIn("Patient", result["pushed"])
+
+    def test_pull_updates_applies_new_records(self):
+        from .sync import _serialize_record
+
+        remote_patient = Patient.objects.create(
+            full_name="Kato John", sex="M", estimated_age=45
+        )
+        remote_patient.synced = True
+        remote_patient.save()
+
+        payload = {"Patient": [_serialize_record(remote_patient)]}
+        applied = pull_updates(payload)
+        self.assertIn("Patient", applied)
+
+    def test_pull_updates_skips_older_records(self):
+        from .sync import _serialize_record
+
+        self.patient.last_modified = timezone.now()
+        self.patient.save()
+
+        from datetime import timedelta
+
+        remote_data = _serialize_record(self.patient)
+        remote_data["last_modified"] = (
+            timezone.now() - timedelta(days=1)
+        ).isoformat()
+
+        applied = pull_updates({"Patient": [remote_data]})
+        self.assertEqual(applied.get("Patient", 0), 0)
+
+
+class SyncViewTests(TestCase):
+    """FR-13: sync views and API endpoints."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+
+    def test_sync_status_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_sync_status_shows_pending(self):
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sync status")
+        self.assertContains(response, "1")
+
+    def test_sync_run_pushes_records(self):
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("pushed", data)
+        self.assertIn("Patient", data["pushed"])
+
+    def test_sync_api_push_returns_unsynced(self):
+        response = self.client.get(reverse("core:sync_api_push"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("records", data)
+        self.assertIn("Patient", data["records"])
+
+    def test_sync_api_pull_applies_updates(self):
+        from .sync import _serialize_record
+
+        remote_patient = Patient.objects.create(
+            full_name="Remote Patient", sex="M", estimated_age=50
+        )
+        remote_patient.synced = True
+        remote_patient.save()
+
+        payload = {"Patient": [_serialize_record(remote_patient)]}
+        # Convert UUIDs to strings for JSON serialization
+        payload["Patient"][0]["id"] = str(payload["Patient"][0]["id"])
+        response = self.client.post(
+            reverse("core:sync_api_pull"),
+            data=__import__("json").dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("applied", data)
+
+    def test_sync_api_pull_rejects_get(self):
+        response = self.client.get(reverse("core:sync_api_pull"))
+        self.assertEqual(response.status_code, 405)
+
+    def test_pwa_manifest(self):
+        response = self.client.get(reverse("core:pwa_manifest"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        data = response.json()
+        self.assertEqual(data["name"], "Clinic System")
+
+    def test_pwa_service_worker(self):
+        response = self.client.get(reverse("core:pwa_service_worker"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/javascript")
+        self.assertIn("CACHE_NAME", response.content.decode())

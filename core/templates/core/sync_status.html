@@ -1,0 +1,86 @@
+{% extends "accounts/base.html" %}
+{% block title %}Sync Status - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Sync status</h1>
+        <p class="muted" style="margin-top:-6px;">FR-13: records pending sync to the central server.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn-primary" type="button" onclick="runSync()">Sync now</button>
+      </div>
+    </div>
+
+    <div class="menu-grid" style="margin-top:18px;">
+      <div class="menu-card">
+        <strong>{{ total_pending }}</strong>
+        <span class="muted">Records pending sync</span>
+      </div>
+    </div>
+
+    <h2 style="font-size:1rem; margin:24px 0 0;">Pending records by model</h2>
+    {% if unsynced %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Pending</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for model_name, records in unsynced.items %}
+            <tr>
+              <td><strong>{{ model_name }}</strong></td>
+              <td>{{ records|length }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">All records are synced. No pending changes.</p>
+    {% endif %}
+
+    <div id="sync-result" style="margin-top:16px;"></div>
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'accounts:dashboard' %}">&laquo; Back to dashboard</a>
+    </div>
+  </div>
+</main>
+<script>
+function runSync() {
+  const resultDiv = document.getElementById('sync-result');
+  resultDiv.innerHTML = '<div class="success">Syncing...</div>';
+  fetch('{% url "core:sync_run" %}', {
+    method: 'GET',
+    headers: {'X-Requested-With': 'XMLHttpRequest'}
+  })
+  .then(response => response.json())
+  .then(data => {
+    const pushed = Object.entries(data.pushed || {})
+      .map(([model, count]) => `${model}: ${count}`)
+      .join(', ');
+    resultDiv.innerHTML = `<div class="success">Sync complete. Pushed: ${pushed || 'nothing'}</div>`;
+    setTimeout(() => window.location.reload(), 1500);
+  })
+  .catch(error => {
+    resultDiv.innerHTML = `<div class="error">Sync failed: ${error}</div>`;
+  });
+}
+</script>
+{% endblock %}

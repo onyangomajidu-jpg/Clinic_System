@@ -39,6 +39,7 @@ from .reports import (
     revenue_report,
 )
 from .services import build_reminder_message, send_sms
+from .sync import get_all_unsynced, pull_updates, push_unsynced
 
 
 def health_check(request):
@@ -940,3 +941,173 @@ def report_export_csv(request, report_type):
         return HttpResponse("Unknown report type", status=400)
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# Offline Capability & Sync (Day 12)
+# FR-12 / FR-13 / SDD 4.3
+# ---------------------------------------------------------------------------
+
+
+@login_required
+def sync_status(request):
+    """
+    FR-13: show sync status - how many records are pending sync per model.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+    unsynced = get_all_unsynced(limit_per_model=1000)
+    total_pending = sum(len(records) for records in unsynced.values())
+    return render(
+        request,
+        "core/sync_status.html",
+        {
+            "staff": staff,
+            "unsynced": unsynced,
+            "total_pending": total_pending,
+        },
+    )
+
+
+@login_required
+def sync_run(request):
+    """
+    FR-13: trigger a sync cycle manually (push unsynced records).
+    """
+    from .sync import sync_all
+
+    result = sync_all()
+    return JsonResponse(result)
+
+
+@login_required
+def sync_api_push(request):
+    """
+    FR-13: API endpoint for the central server to pull unsynced records.
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    unsynced = get_all_unsynced()
+    return JsonResponse({"records": unsynced})
+
+
+@login_required
+def sync_api_pull(request):
+    """
+    FR-13: API endpoint for the central server to push updates to this clinic.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+    import json
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    applied = pull_updates(payload)
+    return JsonResponse({"applied": applied})
+
+
+def pwa_manifest(request):
+    """
+    PWA manifest (FR-12): enables install as a native app.
+    """
+    manifest = {
+        "name": "Clinic System",
+        "short_name": "Clinic",
+        "description": "Clinic Management System for Community Health Clinics",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0f6e5c",
+        "theme_color": "#0f6e5c",
+        "icons": [
+            {
+                "src": "/static/pwa/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+            },
+            {
+                "src": "/static/pwa/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+            },
+        ],
+    }
+    return JsonResponse(manifest)
+
+
+def pwa_service_worker(request):
+    """
+    PWA service worker (FR-12): caches app shell for offline use.
+    """
+    js = """
+const CACHE_NAME = 'clinic-system-v1';
+const APP_SHELL = [
+  '/',
+  '/accounts/login/',
+  '/static/pwa/icon-192.png',
+  '/static/pwa/icon-512.png',
+];
+
+// Install: cache the app shell
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(APP_SHELL);
+    })
+  );
+  self.skipWaiting();
+});
+
+// Activate: clean up old caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      );
+    })
+  );
+  self.clients.claim();
+});
+
+// Fetch: network-first for API calls, cache-first for static assets
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // Don't cache API/sync endpoints
+  if (url.pathname.includes('/api/') || url.pathname.includes('/sync/')) {
+    return;
+  }
+
+  // Cache-first for static assets
+  if (event.request.method === 'GET' && url.pathname.startsWith('/static/')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        return cached || fetch(event.request).then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Network-first for pages, fall back to cache when offline
+  event.respondWith(
+    fetch(event.request).then((response) => {
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+      return response;
+    }).catch(() => {
+      return caches.match(event.request).then((cached) => {
+        return cached || caches.match('/');
+      });
+    })
+  );
+});
+"""
+    from django.http import HttpResponse
+
+    return HttpResponse(js, content_type="application/javascript")

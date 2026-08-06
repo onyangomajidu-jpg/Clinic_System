@@ -7,6 +7,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Clinic System{% endblock %}</title>
+  <!-- PWA (FR-12): enables offline use and install as a native app -->
+  <link rel="manifest" href="{% url 'core:pwa_manifest' %}">
+  <meta name="theme-color" content="#0f6e5c">
+  <link rel="icon" href="/static/pwa/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/static/pwa/icon-192.png">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(error => {
+          console.log('Service worker registration failed:', error);
+        });
+      });
+    }
+  </script>
   <style>
     :root {
       --brand: #0f6e5c;

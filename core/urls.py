@@ -44,4 +44,12 @@ urlpatterns = [
     path("reports/revenue/", views.report_revenue, name="report_revenue"),
     path("reports/drug-usage/", views.report_drug_usage, name="report_drug_usage"),
     path("reports/export/<str:report_type>/", views.report_export_csv, name="report_export_csv"),
+    # Offline & Sync
+    path("sync/status/", views.sync_status, name="sync_status"),
+    path("sync/run/", views.sync_run, name="sync_run"),
+    path("sync/api/push/", views.sync_api_push, name="sync_api_push"),
+    path("sync/api/pull/", views.sync_api_pull, name="sync_api_pull"),
+    # PWA
+    path("manifest.json", views.pwa_manifest, name="pwa_manifest"),
+    path("sw.js", views.pwa_service_worker, name="pwa_service_worker"),
 ]

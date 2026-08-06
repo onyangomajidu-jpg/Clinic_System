@@ -1,0 +1,108 @@
+{% extends "accounts/base.html" %}
+{% block title %}Patient Volumes Report - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:reporting_dashboard' %}">Reports</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Patient volumes</h1>
+        <p class="muted" style="margin-top:-6px;">UR-19 / FR-11: visits and unique patients over a period.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:report_export_csv' 'patient_volumes' %}?start_date={{ start_date|date:'Y-m-d' }}&end_date={{ end_date|date:'Y-m-d' }}">Export CSV</a>
+      </div>
+    </div>
+
+    <!-- Date range selector -->
+    <form method="get" class="search-form" style="margin-top:18px;">
+      <label style="margin:0;" for="start_date">From:</label>
+      <input type="date" name="start_date" id="start_date" class="input" value="{{ start_date|date:'Y-m-d' }}" style="flex:0 0 180px;">
+      <label style="margin:0;" for="end_date">To:</label>
+      <input type="date" name="end_date" id="end_date" class="input" value="{{ end_date|date:'Y-m-d' }}" style="flex:0 0 180px;">
+      <button class="btn-primary" type="submit" style="padding:10px 18px;">Apply</button>
+    </form>
+
+    <!-- Summary cards -->
+    <div class="menu-grid" style="margin-top:18px;">
+      <div class="menu-card">
+        <strong>{{ total_visits }}</strong>
+        <span class="muted">Total visits</span>
+      </div>
+      <div class="menu-card">
+        <strong>{{ unique_patients }}</strong>
+        <span class="muted">Unique patients</span>
+      </div>
+      <div class="menu-card">
+        <strong>{{ new_patients }}</strong>
+        <span class="muted">New registrations</span>
+      </div>
+    </div>
+
+    <!-- Daily breakdown -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Daily visit counts</h2>
+    {% if by_day %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Visits</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in by_day %}
+            <tr>
+              <td>{{ row.date }}</td>
+              <td>{{ row.visits }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No visits in this period.</p>
+    {% endif %}
+
+    <!-- By visit type -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Visits by type</h2>
+    {% if by_visit_type %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Visit type</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in by_visit_type %}
+            <tr>
+              <td>{{ row.visit_type }}</td>
+              <td>{{ row.count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No visits in this period.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:reporting_dashboard' %}">&laquo; Back to reports</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

@@ -23,6 +23,12 @@ from .models import (
     StockMovement,
     Visit,
 )
+from .reports import (
+    diagnosis_report,
+    drug_usage_report,
+    patient_volume_report,
+    revenue_report,
+)
 from .services import build_reminder_message, send_sms
 
 
@@ -1490,3 +1496,151 @@ class AppointmentSMSReminderTests(TestCase):
         self.assertIn("Nakato Aisha", message)
         self.assertIn("Follow-up", message)
         self.assertIn("Community Health Clinic", message)
+
+
+class ReportingServiceTests(TestCase):
+    """UR-19 / FR-11: reporting aggregation functions."""
+
+    def setUp(self):
+        from datetime import date, timedelta
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(
+            patient=self.patient,
+            visit_type=Visit.VisitType.OUTPATIENT,
+            diagnosis="Malaria",
+        )
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.rx = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+        self.drug.dispense(quantity=10, prescription=self.rx)
+        self.rx.quantity_dispensed = 10
+        self.rx.save()
+
+        self.invoice = Invoice.generate_from_visit(self.visit)
+        self.invoice.record_payment(
+            amount=5000, method=Invoice.PaymentMethod.CASH
+        )
+
+    def test_patient_volume_report(self):
+        data = patient_volume_report()
+        self.assertGreaterEqual(data["total_visits"], 1)
+        self.assertGreaterEqual(data["unique_patients"], 1)
+        self.assertIn("by_day", data)
+        self.assertIn("by_visit_type", data)
+
+    def test_diagnosis_report(self):
+        diagnoses = diagnosis_report()
+        self.assertTrue(any(d["diagnosis"] == "Malaria" for d in diagnoses))
+
+    def test_revenue_report(self):
+        data = revenue_report()
+        self.assertGreaterEqual(data["total_billed"], 5000)
+        self.assertGreaterEqual(data["total_collected"], 5000)
+        self.assertIn("by_method", data)
+
+    def test_drug_usage_report(self):
+        drugs = drug_usage_report()
+        self.assertTrue(any(d["drug"] == "Amoxicillin" for d in drugs))
+        amox = next(d for d in drugs if d["drug"] == "Amoxicillin")
+        self.assertEqual(amox["quantity_dispensed"], 10)
+
+
+class ReportingViewTests(TestCase):
+    """UR-19 / UR-23 / FR-11: reporting views."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(
+            patient=self.patient, diagnosis="Malaria"
+        )
+
+    def test_reporting_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:reporting_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_reporting_dashboard_loads(self):
+        response = self.client.get(reverse("core:reporting_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Reporting & Analytics")
+
+    def test_patient_volumes_report_loads(self):
+        response = self.client.get(reverse("core:report_patient_volumes"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient volumes")
+
+    def test_diagnoses_report_loads(self):
+        response = self.client.get(reverse("core:report_diagnoses"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Common diagnoses")
+
+    def test_revenue_report_loads(self):
+        response = self.client.get(reverse("core:report_revenue"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Revenue report")
+
+    def test_drug_usage_report_loads(self):
+        response = self.client.get(reverse("core:report_drug_usage"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Drug usage")
+
+    def test_csv_export_patient_volumes(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["patient_volumes"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Date", response.content.decode())
+
+    def test_csv_export_diagnoses(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["diagnoses"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Diagnosis", response.content.decode())
+
+    def test_csv_export_revenue(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["revenue"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Billed", response.content.decode())
+
+    def test_csv_export_drug_usage(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["drug_usage"])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("Drug", response.content.decode())
+
+    def test_csv_export_unknown_type(self):
+        response = self.client.get(
+            reverse("core:report_export_csv", args=["unknown"])
+        )
+        self.assertEqual(response.status_code, 400)

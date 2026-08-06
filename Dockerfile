@@ -11,6 +11,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first so this layer is cached
@@ -20,6 +21,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project source
 COPY . .
 
+# Create non-root user for security
+RUN useradd -m -u 1000 clinicuser \
+    && chown -R clinicuser:clinicuser /app
+USER clinicuser
+
 EXPOSE 8000
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Production: use gunicorn (falls back to runserver for dev via CMD override)
+CMD ["gunicorn", "clinic_system.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]

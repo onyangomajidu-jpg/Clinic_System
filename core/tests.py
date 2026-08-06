@@ -2,8 +2,20 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
-from .forms import PatientRegistrationForm, VisitForm
-from .models import Patient, Staff, Visit
+from .forms import (
+    DispenseForm,
+    PatientRegistrationForm,
+    PrescriptionForm,
+    VisitForm,
+)
+from .models import (
+    Drug,
+    Patient,
+    Prescription,
+    Staff,
+    StockMovement,
+    Visit,
+)
 
 
 class PatientRegistrationTests(TestCase):
@@ -352,3 +364,560 @@ class VisitFormTests(TestCase):
         self.assertEqual(visit.vitals["pulse"], "88")
         self.assertEqual(visit.vitals["temperature"], "37.5")
         self.assertEqual(visit.vitals["weight"], "70.0")
+
+
+class PharmacyDrugModelTests(TestCase):
+    """UR-13 / FR-5 / FR-6: Drug stock model behaviour."""
+
+    def setUp(self):
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_is_low_stock(self):
+        self.assertFalse(self.drug.is_low_stock)
+        self.drug.stock_quantity = 10
+        self.assertTrue(self.drug.is_low_stock)
+        self.drug.stock_quantity = 5
+        self.assertTrue(self.drug.is_low_stock)
+
+    def test_is_near_expiry(self):
+        from datetime import date, timedelta
+
+        # 60 days out -> near expiry
+        self.drug.expiry_date = date.today() + timedelta(days=60)
+        self.assertTrue(self.drug.is_near_expiry)
+        # 120 days out -> not near expiry
+        self.drug.expiry_date = date.today() + timedelta(days=120)
+        self.assertFalse(self.drug.is_near_expiry)
+
+    def test_is_expired(self):
+        from datetime import date, timedelta
+
+        self.drug.expiry_date = date.today() - timedelta(days=1)
+        self.assertTrue(self.drug.is_expired)
+        self.drug.expiry_date = date.today() + timedelta(days=1)
+        self.assertFalse(self.drug.is_expired)
+
+    def test_dispense_decrements_stock_and_logs_movement(self):
+        new_stock = self.drug.dispense(quantity=10)
+        self.assertEqual(new_stock, 40)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 40)
+        movement = StockMovement.objects.get(drug=self.drug)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.DISPENSE)
+        self.assertEqual(movement.quantity, 10)
+        self.assertEqual(movement.balance_after, 40)
+        self.assertIsNone(movement.prescription)
+
+    def test_dispense_raises_when_insufficient_stock(self):
+        with self.assertRaises(ValueError):
+            self.drug.dispense(quantity=100)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 50)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_dispense_zero_raises(self):
+        with self.assertRaises(ValueError):
+            self.drug.dispense(quantity=0)
+
+    def test_restock_increases_stock_and_logs_movement(self):
+        new_stock = self.drug.restock(quantity=100, staff=None, notes="Supplier delivery")
+        self.assertEqual(new_stock, 150)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 150)
+        movement = StockMovement.objects.get(drug=self.drug)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.RESTOCK)
+        self.assertEqual(movement.quantity, 100)
+        self.assertEqual(movement.balance_after, 150)
+        self.assertEqual(movement.notes, "Supplier delivery")
+
+
+class PrescriptionModelTests(TestCase):
+    """UR-14: partial dispensing and remaining quantity tracking."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=20,
+            unit_price="0.10",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_remaining_quantity_initial(self):
+        self.assertEqual(self.prescription.remaining_quantity, 21)
+        self.assertFalse(self.prescription.is_fully_dispensed)
+
+    def test_remaining_quantity_after_partial_dispense(self):
+        # Simulate partial dispensing (UR-14)
+        self.drug.dispense(quantity=10, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 10
+        self.prescription.dispensed_by = self.staff
+        self.prescription.save()
+        self.assertEqual(self.prescription.remaining_quantity, 11)
+        self.assertFalse(self.prescription.is_fully_dispensed)
+
+    def test_fully_dispensed(self):
+        self.drug.dispense(quantity=21, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 21
+        self.prescription.dispensed_by = self.staff
+        self.prescription.save()
+        self.assertEqual(self.prescription.remaining_quantity, 0)
+        self.assertTrue(self.prescription.is_fully_dispensed)
+
+    def test_dispense_links_stock_movement_to_prescription(self):
+        self.drug.dispense(quantity=5, staff=self.staff, prescription=self.prescription)
+        movement = StockMovement.objects.get(drug=self.drug, prescription=self.prescription)
+        self.assertEqual(movement.staff, self.staff)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.DISPENSE)
+
+
+class PharmacyDashboardTests(TestCase):
+    """UR-11 / UR-13 / FR-6: pharmacy landing page with queue and alerts."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=5,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_dashboard_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_dashboard_shows_pending_prescriptions(self):
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+        self.assertContains(response, "Nakato Aisha")
+
+    def test_dashboard_shows_low_stock_alert(self):
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Low stock alerts")
+        self.assertContains(response, "Amoxicillin")
+
+    def test_dashboard_empty_still_loads(self):
+        Prescription.objects.all().delete()
+        Drug.objects.all().delete()
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No prescriptions waiting")
+
+
+class PharmacyDispenseViewTests(TestCase):
+    """UR-11 / UR-12: pharmacist dispenses against a prescription."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.patient = Patient.objects.create(
+            full_name="Nakato Aisha", sex="F", estimated_age=34
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.10",
+        )
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_dispense_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Dispense medication")
+        self.assertContains(response, "Paracetamol")
+
+    def test_dispense_requires_login(self):
+        self.client.logout()
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_dispense_full_quantity(self):
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "21"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.prescription.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 21)
+        self.assertEqual(self.drug.stock_quantity, 29)
+        self.assertEqual(self.prescription.dispensed_by, self.staff)
+        movement = StockMovement.objects.get(
+            drug=self.drug, prescription=self.prescription
+        )
+        self.assertEqual(movement.quantity, 21)
+        self.assertEqual(movement.balance_after, 29)
+
+    def test_partial_dispense(self):
+        """UR-14: dispense only part of the prescription."""
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.prescription.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 10)
+        self.assertEqual(self.drug.stock_quantity, 40)
+
+    def test_cannot_dispense_more_than_remaining(self):
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "22"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Cannot dispense more than the remaining")
+        self.prescription.refresh_from_db()
+        self.assertEqual(self.prescription.quantity_dispensed, 0)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 50)
+
+    def test_cannot_dispense_more_than_stock(self):
+        self.drug.stock_quantity = 5
+        self.drug.save()
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "in stock")
+
+    def test_already_fully_dispensed_redirects(self):
+        self.drug.dispense(quantity=21, staff=self.staff, prescription=self.prescription)
+        self.prescription.quantity_dispensed = 21
+        self.prescription.save()
+        response = self.client.get(
+            reverse("core:pharmacy_dispense", args=[self.prescription.pk])
+        )
+        self.assertRedirects(response, reverse("core:pharmacy_dashboard"))
+
+
+class PrescriptionFormTests(TestCase):
+    """UR-8 / FR-4: prescription form linked to pharmacy stock."""
+
+    def setUp(self):
+        self.out_of_stock = Drug.objects.create(
+            name="Out of Stock Drug",
+            unit="tablet",
+            stock_quantity=0,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+        self.in_stock = Drug.objects.create(
+            name="In Stock Drug",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+
+    def test_form_only_shows_in_stock_drugs(self):
+        form = PrescriptionForm()
+        drugs = form.fields["drug"].queryset
+        self.assertIn(self.in_stock, drugs)
+        self.assertNotIn(self.out_of_stock, drugs)
+
+    def test_form_is_valid_for_in_stock_drug(self):
+        form = PrescriptionForm(
+            data={
+                "drug": self.in_stock.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "21",
+            }
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_quantity_must_be_positive(self):
+        form = PrescriptionForm(
+            data={
+                "drug": self.in_stock.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "0",
+            }
+        )
+        self.assertFalse(form.is_valid())
+
+
+class DispenseFormTests(TestCase):
+    """UR-14: dispense form validation against prescription and stock."""
+
+    def setUp(self):
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=30,
+            reorder_level=10,
+            unit_price="0.10",
+        )
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+    def test_remaining_quantity_is_initial(self):
+        form = DispenseForm(prescription=self.prescription)
+        self.assertEqual(
+            form.fields["quantity_to_dispense"].initial,
+            21,
+        )
+
+    def test_valid_full_dispense(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "21"}, prescription=self.prescription
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_valid_partial_dispense(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "5"}, prescription=self.prescription
+        )
+        self.assertTrue(form.is_valid())
+
+    def test_rejects_more_than_remaining(self):
+        form = DispenseForm(
+            {"quantity_to_dispense": "22"}, prescription=self.prescription
+        )
+        self.assertFalse(form.is_valid())
+
+    def test_rejects_more_than_stock(self):
+        self.drug.stock_quantity = 5
+        self.drug.save()
+        form = DispenseForm(
+            {"quantity_to_dispense": "10"}, prescription=self.prescription
+        )
+        self.assertFalse(form.is_valid())
+
+
+class PharmacyDrugInventoryTests(TestCase):
+    """UR-13: manage drug inventory (list, add, edit, restock)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=20,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_drug_list_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_drug_list"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_drug_list_shows_drugs(self):
+        response = self.client.get(reverse("core:pharmacy_drug_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_drug_create_page_loads(self):
+        response = self.client.get(reverse("core:pharmacy_drug_create"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_drug_create_saves_drug(self):
+        response = self.client.post(
+            reverse("core:pharmacy_drug_create"),
+            {
+                "name": "Metronidazole",
+                "unit": "tablet",
+                "stock_quantity": "100",
+                "reorder_level": "20",
+                "unit_price": "0.20",
+                "expiry_date": "2027-06-01",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(Drug.objects.filter(name="Metronidazole").exists())
+
+    def test_drug_edit_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_drug_edit", args=[self.drug.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_drug_edit_updates_drug(self):
+        response = self.client.post(
+            reverse("core:pharmacy_drug_edit", args=[self.drug.pk]),
+            {
+                "name": "Amoxicillin 500mg",
+                "unit": "tablet",
+                "stock_quantity": "25",
+                "reorder_level": "15",
+                "unit_price": "0.60",
+                "expiry_date": "2027-12-01",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.name, "Amoxicillin 500mg")
+        self.assertEqual(self.drug.stock_quantity, 25)
+        self.assertEqual(self.drug.reorder_level, 15)
+
+    def test_restock_page_loads(self):
+        response = self.client.get(
+            reverse("core:pharmacy_restock", args=[self.drug.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Restock Amoxicillin")
+
+    def test_restock_increases_stock_and_logs(self):
+        response = self.client.post(
+            reverse("core:pharmacy_restock", args=[self.drug.pk]),
+            {"quantity": "100", "notes": "Monthly delivery"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 120)
+        movement = StockMovement.objects.get(
+            drug=self.drug, movement_type=StockMovement.MovementType.RESTOCK
+        )
+        self.assertEqual(movement.quantity, 100)
+        self.assertEqual(movement.balance_after, 120)
+        self.assertEqual(movement.staff, self.staff)
+        self.assertEqual(movement.notes, "Monthly delivery")
+
+
+class PharmacyStockMovementsTests(TestCase):
+    """SDD section 8: audit trail of stock movements."""
+
+    def setUp(self):
+        self.user = User.objects.create_user("pharmacist", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Sarah Nakato", role=Staff.Role.PHARMACIST
+        )
+        self.client.login(username="pharmacist", password="TestPass123!")
+
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="0.50",
+        )
+        self.drug.restock(quantity=50, staff=self.staff, notes="Initial stock")
+        self.patient = Patient.objects.create(
+            full_name="Test Patient", sex="M", estimated_age=25
+        )
+        self.visit = Visit.objects.create(patient=self.patient)
+        self.prescription = Prescription.objects.create(
+            visit=self.visit,
+            drug=self.drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=10,
+        )
+        self.drug.dispense(quantity=5, staff=self.staff, prescription=self.prescription)
+
+    def test_movements_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("core:pharmacy_stock_movements"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_movements_page_lists_entries(self):
+        response = self.client.get(reverse("core:pharmacy_stock_movements"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+        self.assertContains(response, "Dispense")
+        self.assertContains(response, "Restock")
+
+    def test_filter_by_dispense_type(self):
+        response = self.client.get(
+            reverse("core:pharmacy_stock_movements"), {"type": "dispense"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the dispense movement (5 units) is shown, not the restock (50 units).
+        self.assertContains(response, "5 tablet(s)")
+        self.assertNotContains(response, "50 tablet(s)")
+
+    def test_filter_by_restock_type(self):
+        response = self.client.get(
+            reverse("core:pharmacy_stock_movements"), {"type": "restock"}
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only the restock movement (50 units) is shown, not the dispense (5 units).
+        self.assertContains(response, "50 tablet(s)")
+        self.assertNotContains(response, "5 tablet(s)")

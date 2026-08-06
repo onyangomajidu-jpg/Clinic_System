@@ -1,13 +1,23 @@
+from datetime import date, timedelta
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import models
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 
-from .forms import PatientRegistrationForm, VisitForm
-from .models import Patient, Visit
+from .forms import (
+    DispenseForm,
+    DrugForm,
+    PatientRegistrationForm,
+    PrescriptionForm,
+    RestockForm,
+    VisitForm,
+)
+from .models import Drug, Patient, Prescription, StockMovement, Visit
 
 
 def health_check(request):
@@ -148,3 +158,247 @@ def visit_detail(request, pk):
     """
     visit = get_object_or_404(Visit, pk=pk)
     return render(request, "core/visit_detail.html", {"visit": visit})
+
+
+# ---------------------------------------------------------------------------
+# Pharmacy & Inventory (Day 8)
+# UR-8/UR-11/UR-12/UR-13/UR-14, FR-4/FR-5/FR-6
+# ---------------------------------------------------------------------------
+
+
+@login_required
+def visit_prescription_create(request, pk):
+    """
+    UR-8 / FR-4: clinician adds a prescription to a visit, linked to
+    pharmacy stock.
+
+    The drug picker (PrescriptionForm) only lists drugs with stock > 0 and
+    shows the available quantity next to each name, so the clinician cannot
+    unknowingly prescribe an out-of-stock medication.
+    """
+    visit = get_object_or_404(Visit, pk=pk)
+    if request.method == "POST":
+        form = PrescriptionForm(request.POST)
+        if form.is_valid():
+            prescription = form.save(commit=False)
+            prescription.visit = visit
+            prescription.save()
+            messages.success(
+                request,
+                f"Prescription added: {prescription.drug.name} "
+                f"({prescription.quantity_prescribed} {prescription.drug.unit}(s)).",
+            )
+            return redirect("core:visit_detail", pk=visit.pk)
+    else:
+        form = PrescriptionForm()
+
+    return render(
+        request,
+        "core/prescription_form.html",
+        {"form": form, "visit": visit},
+    )
+
+
+@login_required
+def pharmacy_dashboard(request):
+    """
+    UR-11/UR-13/FR-6: pharmacy landing page.
+
+    Shows:
+    - prescriptions waiting to be dispensed (the day's queue),
+    - low-stock drugs (UR-13),
+    - near-expiry / expired drugs (UR-13),
+    - today's dispensing activity.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+
+    pending_prescriptions = (
+        Prescription.objects.exclude(quantity_prescribed__lte=models.F("quantity_dispensed"))
+        .select_related("visit", "visit__patient", "drug")
+        .order_by("created_at")[:20]
+    )
+    dispensed_count = Prescription.objects.filter(
+        quantity_dispensed__gt=0
+    ).count()
+
+    low_stock = Drug.objects.filter(stock_quantity__lte=models.F("reorder_level")).order_by("stock_quantity")
+    near_expiry = Drug.objects.filter(expiry_date__isnull=False).exclude(
+        expiry_date__gt=date.today() + timedelta(days=90)
+    ).order_by("expiry_date")
+    expired = Drug.objects.filter(expiry_date__lt=date.today()).order_by("expiry_date")
+
+    recent_movements = StockMovement.objects.select_related("drug", "staff", "prescription").order_by("-created_at")[:10]
+
+    context = {
+        "staff": staff,
+        "pending_prescriptions": pending_prescriptions,
+        "dispensed_count": dispensed_count,
+        "low_stock_drugs": low_stock,
+        "near_expiry_drugs": near_expiry,
+        "expired_drugs": expired,
+        "recent_movements": recent_movements,
+        "low_stock_count": low_stock.count(),
+        "near_expiry_count": near_expiry.count(),
+        "expired_count": expired.count(),
+    }
+    return render(request, "core/pharmacy_dashboard.html", context)
+
+
+@login_required
+def pharmacy_dispense(request, pk):
+    """
+    UR-11 / UR-12 / UR-14: pharmacist dispenses against a prescription.
+
+    The quantity defaults to the remaining balance on the prescription, but
+    can be reduced for partial dispensing (UR-14). Stock is decremented
+    atomically via Drug.dispense() (FR-5), and the dispensed_by staff member
+    is captured from the logged-in user for the audit trail (SDD section 8).
+    """
+    prescription = get_object_or_404(Prescription, pk=pk)
+    staff = getattr(request.user, "staff_profile", None)
+
+    if prescription.remaining_quantity <= 0:
+        messages.info(request, "This prescription has already been fully dispensed.")
+        return redirect("core:pharmacy_dashboard")
+
+    if request.method == "POST":
+        form = DispenseForm(request.POST, prescription=prescription)
+        if form.is_valid():
+            quantity = form.cleaned_data["quantity_to_dispense"]
+            try:
+                prescription.drug.dispense(
+                    quantity=quantity,
+                    staff=staff,
+                    prescription=prescription,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return render(
+                    request,
+                    "core/pharmacy_dispense.html",
+                    {"form": form, "prescription": prescription, "staff": staff},
+                )
+            prescription.quantity_dispensed += quantity
+            prescription.dispensed_by = staff
+            prescription.save()
+            messages.success(
+                request,
+                f"Dispensed {quantity} {prescription.drug.unit}(s) of "
+                f"{prescription.drug.name}.",
+            )
+            return redirect("core:pharmacy_dashboard")
+    else:
+        form = DispenseForm(prescription=prescription)
+
+    return render(
+        request,
+        "core/pharmacy_dispense.html",
+        {"form": form, "prescription": prescription, "staff": staff},
+    )
+
+
+@login_required
+def pharmacy_drug_list(request):
+    """
+    UR-13: full drug inventory list with stock levels, alerts, and actions.
+    """
+    drugs = Drug.objects.order_by("name")
+    return render(request, "core/pharmacy_drug_list.html", {"drugs": drugs, "drug_count": drugs.count()})
+
+
+@login_required
+def pharmacy_drug_create(request):
+    """
+    UR-13: add a new drug to the inventory.
+    """
+    if request.method == "POST":
+        form = DrugForm(request.POST)
+        if form.is_valid():
+            drug = form.save()
+            messages.success(request, f"{drug.name} added to the inventory.")
+            return redirect("core:pharmacy_drug_list")
+    else:
+        form = DrugForm()
+    return render(request, "core/pharmacy_drug_form.html", {"form": form, "is_edit": False})
+
+
+@login_required
+def pharmacy_drug_edit(request, pk):
+    """
+    UR-13: edit a drug (stock level, reorder level, price, expiry).
+    """
+    drug = get_object_or_404(Drug, pk=pk)
+    if request.method == "POST":
+        form = DrugForm(request.POST, instance=drug)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"{drug.name} updated.")
+            return redirect("core:pharmacy_drug_list")
+    else:
+        form = DrugForm(instance=drug)
+    return render(
+        request,
+        "core/pharmacy_drug_form.html",
+        {"form": form, "drug": drug, "is_edit": True},
+    )
+
+
+@login_required
+def pharmacy_restock(request, pk):
+    """
+    UR-13: record a stock delivery / restock for a drug.
+
+    The staff member is captured from the logged-in user, and the increase
+    is recorded via Drug.restock() which also writes a StockMovement audit
+    record.
+    """
+    drug = get_object_or_404(Drug, pk=pk)
+    staff = getattr(request.user, "staff_profile", None)
+
+    if request.method == "POST":
+        form = RestockForm(request.POST)
+        if form.is_valid():
+            quantity = form.cleaned_data["quantity"]
+            notes = form.cleaned_data["notes"]
+            drug.restock(quantity=quantity, staff=staff, notes=notes)
+            messages.success(
+                request,
+                f"Restocked {quantity} {drug.unit}(s) of {drug.name}. "
+                f"New stock: {drug.stock_quantity} {drug.unit}(s).",
+            )
+            return redirect("core:pharmacy_drug_list")
+    else:
+        form = RestockForm()
+
+    return render(
+        request,
+        "core/pharmacy_restock.html",
+        {"form": form, "drug": drug},
+    )
+
+
+@login_required
+def pharmacy_stock_movements(request):
+    """
+    SDD section 8 / FR-11: audit trail of all stock movements.
+
+    Shows who dispensed/restocked what and when, with the resulting balance,
+    so administrators can trace any stock change.
+    """
+    movements = StockMovement.objects.select_related("drug", "staff", "prescription")
+    movement_type = request.GET.get("type", "")
+    if movement_type:
+        movements = movements.filter(movement_type=movement_type)
+
+    paginator = Paginator(movements, 20)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(
+        request,
+        "core/pharmacy_stock_movements.html",
+        {
+            "page_obj": page_obj,
+            "movements": page_obj.object_list,
+            "movement_type": movement_type,
+        },
+    )

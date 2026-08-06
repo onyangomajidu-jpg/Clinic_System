@@ -46,6 +46,7 @@ from core.models import (
     Patient,
     Prescription,
     Staff,
+    StockMovement,
     Visit,
 )
 
@@ -86,6 +87,7 @@ ROLE_PERMISSIONS = {
         (Patient, VIEW_ONLY),
         (Prescription, VIEW_CHANGE),
         (Drug, VIEW_ADD_CHANGE),
+        (StockMovement, VIEW_ONLY),
     ],
     Staff.Role.LAB_TECHNICIAN: [
         (Patient, VIEW_ONLY),
@@ -97,6 +99,7 @@ ROLE_PERMISSIONS = {
         (Visit, VIEW_ADD_CHANGE_DELETE),
         (Drug, VIEW_ADD_CHANGE_DELETE),
         (Prescription, VIEW_ADD_CHANGE_DELETE),
+        (StockMovement, VIEW_ADD_CHANGE_DELETE),
         (Invoice, VIEW_ADD_CHANGE_DELETE),
         (InvoiceLineItem, VIEW_ADD_CHANGE_DELETE),
         (LabTest, VIEW_ADD_CHANGE_DELETE),

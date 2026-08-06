@@ -1,0 +1,88 @@
+{% extends "accounts/base.html" %}
+{% block title %}Drug Inventory - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ request.user.username }}{% if request.user.staff_profile %} &middot; {{ request.user.staff_profile.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:pharmacy_dashboard' %}">Pharmacy</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Drug inventory</h1>
+        <p class="muted" style="margin-top:-6px;">{{ drug_count }} drug(s) in stock.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-primary" href="{% url 'core:pharmacy_drug_create' %}">Add drug</a>
+        <a class="btn-secondary" href="{% url 'core:pharmacy_stock_movements' %}">Stock movements</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    {% if drugs %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Drug</th>
+              <th>Unit</th>
+              <th>Stock</th>
+              <th>Reorder</th>
+              <th>Price</th>
+              <th>Expiry</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for drug in drugs %}
+            <tr>
+              <td><strong>{{ drug.name }}</strong></td>
+              <td>{{ drug.unit }}</td>
+              <td>{{ drug.stock_quantity }}</td>
+              <td>{{ drug.reorder_level }}</td>
+              <td>{{ drug.unit_price }}</td>
+              <td>{{ drug.expiry_date|date:"d M Y"|default:"&mdash;" }}</td>
+              <td>
+                {% if drug.is_expired %}
+                  <span class="badge badge-referred">Expired</span>
+                {% elif drug.is_low_stock %}
+                  <span class="badge badge-referred">Low stock</span>
+                {% elif drug.is_near_expiry %}
+                  <span class="badge badge-open">Near expiry</span>
+                {% else %}
+                  <span class="badge badge-closed">OK</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:pharmacy_restock' drug.pk %}">Restock</a>
+                <a class="btn-small" href="{% url 'core:pharmacy_drug_edit' drug.pk %}">Edit</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:18px;">No drugs in the inventory yet. <a href="{% url 'core:pharmacy_drug_create' %}">Add the first drug</a>.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:pharmacy_dashboard' %}">&laquo; Back to pharmacy</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

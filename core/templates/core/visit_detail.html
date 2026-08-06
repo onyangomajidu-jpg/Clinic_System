@@ -97,7 +97,52 @@
       </div>
     </div>
 
-    <div class="card-foot no-print">
+    <!-- Prescriptions (UR-8 / FR-4) -->
+    <h2 style="font-size:1rem; margin:20px 0 0;">Prescriptions</h2>
+    {% if visit.prescriptions.all %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Drug</th>
+              <th>Dosage</th>
+              <th>Frequency</th>
+              <th>Duration</th>
+              <th>Prescribed</th>
+              <th>Dispensed</th>
+              <th>Remaining</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rx in visit.prescriptions.all %}
+            <tr>
+              <td><strong>{{ rx.drug.name }}</strong></td>
+              <td>{{ rx.dosage }}</td>
+              <td>{{ rx.frequency }}</td>
+              <td>{{ rx.duration_days }} days</td>
+              <td>{{ rx.quantity_prescribed }} {{ rx.drug.unit }}(s)</td>
+              <td>{{ rx.quantity_dispensed }} {{ rx.drug.unit }}(s)</td>
+              <td>
+                {% if rx.is_fully_dispensed %}
+                  <span class="badge badge-closed">Complete</span>
+                {% else %}
+                  <strong>{{ rx.remaining_quantity }} {{ rx.drug.unit }}(s)</strong>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No prescriptions recorded for this visit.</p>
+    {% endif %}
+
+    <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
+      <a class="btn-secondary" href="{% url 'core:visit_prescription_create' visit.pk %}">Add prescription</a>
+    </div>
+
+    <div class="card-foot no-print" style="margin-top:20px;">
       <a class="btn-secondary" href="{% url 'core:patient_visits' visit.patient.pk %}">&laquo; Back to visit history</a>
     </div>
   </div>

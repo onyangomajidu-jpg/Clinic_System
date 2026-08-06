@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from django.conf import settings
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 
@@ -181,6 +181,71 @@ class Drug(SyncedModel):
             return False
         return self.expiry_date <= date.today() + timedelta(days=90)
 
+    @property
+    def days_until_expiry(self):
+        """Number of days until expiry (negative if already expired)."""
+        if not self.expiry_date:
+            return None
+        return (self.expiry_date - date.today()).days
+
+    @property
+    def is_expired(self):
+        """Whether the drug has already passed its expiry date (UR-13)."""
+        if not self.expiry_date:
+            return False
+        return self.expiry_date < date.today()
+
+    @transaction.atomic
+    def dispense(self, quantity, staff=None, prescription=None):
+        """
+        FR-5 / UR-12: atomically decrement stock when a drug is dispensed.
+
+        Validates that enough stock is available, decrements stock_quantity,
+        and writes an audit StockMovement record (SDD section 8: audit
+        logging for prescription dispensing).
+
+        Raises ValueError if there is not enough stock to fill the order.
+        """
+        if quantity <= 0:
+            raise ValueError("Dispense quantity must be greater than zero.")
+        if self.stock_quantity < quantity:
+            raise ValueError(
+                f"Not enough stock for {self.name}: only {self.stock_quantity} "
+                f"{self.unit}(s) available."
+            )
+        self.stock_quantity -= quantity
+        self.save(update_fields=["stock_quantity", "last_modified"])
+        StockMovement.objects.create(
+            drug=self,
+            prescription=prescription,
+            movement_type=StockMovement.MovementType.DISPENSE,
+            quantity=quantity,
+            staff=staff,
+            balance_after=self.stock_quantity,
+        )
+        return self.stock_quantity
+
+    @transaction.atomic
+    def restock(self, quantity, staff=None, notes=""):
+        """
+        Increase stock_quantity and write an audit StockMovement record.
+
+        Used by the pharmacy restock workflow (UR-13: reorder in time).
+        """
+        if quantity <= 0:
+            raise ValueError("Restock quantity must be greater than zero.")
+        self.stock_quantity += quantity
+        self.save(update_fields=["stock_quantity", "last_modified"])
+        StockMovement.objects.create(
+            drug=self,
+            movement_type=StockMovement.MovementType.RESTOCK,
+            quantity=quantity,
+            staff=staff,
+            notes=notes,
+            balance_after=self.stock_quantity,
+        )
+        return self.stock_quantity
+
 
 class Visit(SyncedModel):
     """UR-6/UR-7: the primary clinical workspace for a single patient encounter."""
@@ -224,13 +289,24 @@ class Visit(SyncedModel):
 
 
 class Prescription(SyncedModel):
-    """UR-8/UR-11/UR-14: drugs prescribed during a visit, linked to pharmacy stock."""
+    """
+    UR-8/UR-11/UR-14: drugs prescribed during a visit, linked to pharmacy stock.
+
+    quantity_prescribed is the amount the clinician ordered;
+    quantity_dispensed tracks how much the pharmacist has actually handed
+    over so far, so partial dispensing (UR-14) leaves a visible remaining
+    balance on the same prescription.
+    """
 
     visit = models.ForeignKey(Visit, on_delete=models.CASCADE, related_name="prescriptions")
     drug = models.ForeignKey(Drug, on_delete=models.PROTECT, related_name="prescriptions")
     dosage = models.CharField(max_length=100)
     frequency = models.CharField(max_length=100)
     duration_days = models.PositiveIntegerField()
+    quantity_prescribed = models.PositiveIntegerField(
+        default=0,
+        help_text="Total quantity the clinician prescribed for this course.",
+    )
     quantity_dispensed = models.PositiveIntegerField(
         default=0, help_text="Supports partial dispensing (UR-14)."
     )
@@ -242,8 +318,74 @@ class Prescription(SyncedModel):
         related_name="dispensed_prescriptions",
     )
 
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["quantity_dispensed"]),
+        ]
+
     def __str__(self):
         return f"{self.drug.name} for {self.visit.patient.full_name}"
+
+    @property
+    def remaining_quantity(self):
+        """
+        How much of the prescribed course is still to be dispensed (UR-14).
+        """
+        if self.quantity_prescribed:
+            return max(0, self.quantity_prescribed - self.quantity_dispensed)
+        return 0
+
+    @property
+    def is_fully_dispensed(self):
+        return self.remaining_quantity == 0
+
+
+class StockMovement(SyncedModel):
+    """
+    Audit trail for every stock change (dispense, restock, adjustment).
+
+    SDD section 8 ("Audit logging") requires prescription dispensing to be
+    logged with timestamp and staff ID; this model covers that plus stock
+    restocks, so clinic administrators can see exactly how stock levels
+    changed over time (FR-11: drug usage trends).
+    """
+
+    class MovementType(models.TextChoices):
+        DISPENSE = "dispense", "Dispense"
+        RESTOCK = "restock", "Restock"
+        ADJUSTMENT = "adjustment", "Adjustment"
+
+    drug = models.ForeignKey(Drug, on_delete=models.PROTECT, related_name="stock_movements")
+    prescription = models.ForeignKey(
+        Prescription,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_movements",
+        help_text="Populated when this movement was a dispensing event.",
+    )
+    movement_type = models.CharField(max_length=20, choices=MovementType.choices)
+    quantity = models.PositiveIntegerField(help_text="Absolute quantity moved.")
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_movements",
+        help_text="Staff member who performed the movement (audit trail).",
+    )
+    notes = models.CharField(max_length=200, blank=True)
+    balance_after = models.PositiveIntegerField(
+        help_text="Stock level of the drug immediately after this movement."
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.get_movement_type_display()} {self.quantity} {self.drug.unit}(s) of {self.drug.name}"
 
 
 class Invoice(SyncedModel):

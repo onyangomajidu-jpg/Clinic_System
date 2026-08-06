@@ -6,10 +6,21 @@ app_name = "core"
 
 urlpatterns = [
     path("health/", views.health_check, name="health_check"),
+    # Patient registration / search
     path("patients/register/", views.patient_register, name="patient_register"),
     path("patients/search/", views.patient_search, name="patient_search"),
     path("patients/<uuid:pk>/card/", views.patient_card, name="patient_card"),
     path("patients/<uuid:pk>/visits/", views.patient_visits, name="patient_visits"),
     path("patients/<uuid:pk>/visits/new/", views.visit_create, name="visit_create"),
     path("visits/<uuid:pk>/", views.visit_detail, name="visit_detail"),
+    # Prescriptions (linked to visits)
+    path("visits/<uuid:pk>/prescriptions/new/", views.visit_prescription_create, name="visit_prescription_create"),
+    # Pharmacy & Inventory
+    path("pharmacy/", views.pharmacy_dashboard, name="pharmacy_dashboard"),
+    path("pharmacy/drugs/", views.pharmacy_drug_list, name="pharmacy_drug_list"),
+    path("pharmacy/drugs/new/", views.pharmacy_drug_create, name="pharmacy_drug_create"),
+    path("pharmacy/drugs/<uuid:pk>/edit/", views.pharmacy_drug_edit, name="pharmacy_drug_edit"),
+    path("pharmacy/drugs/<uuid:pk>/restock/", views.pharmacy_restock, name="pharmacy_restock"),
+    path("pharmacy/dispense/<uuid:pk>/", views.pharmacy_dispense, name="pharmacy_dispense"),
+    path("pharmacy/movements/", views.pharmacy_stock_movements, name="pharmacy_stock_movements"),
 ]

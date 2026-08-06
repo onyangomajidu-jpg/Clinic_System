@@ -1,0 +1,137 @@
+{% extends "accounts/base.html" %}
+{% block title %}Appointment - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ request.user.username }}{% if request.user.staff_profile %} &middot; {{ request.user.staff_profile.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <a class="topbar-link" href="{% url 'core:appointment_dashboard' %}">Appointments</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Appointment details</h1>
+        <p class="muted" style="margin-top:-6px;">
+          <a href="{% url 'core:patient_visits' appointment.patient.pk %}">{{ appointment.patient.full_name }}</a>
+          &middot; {{ appointment.appointment_date|date:"l, d M Y H:i" }}
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        {% if appointment.status == "scheduled" or appointment.status == "reminded" %}
+          <a class="btn-primary" href="{% url 'core:appointment_mark_attended' appointment.pk %}">Mark attended</a>
+          <a class="btn-secondary" href="{% url 'core:appointment_cancel' appointment.pk %}">Cancel</a>
+        {% endif %}
+        {% if appointment.can_send_reminder %}
+          <a class="btn-secondary" href="{% url 'core:appointment_send_reminder' appointment.pk %}">Send SMS reminder</a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="card-head" style="margin-top:18px;">
+      <div>
+        <div class="muted">Status</div>
+        <div style="margin-top:6px;">
+          {% if appointment.status == "attended" %}
+            <span class="badge badge-closed">Attended</span>
+          {% elif appointment.status == "cancelled" %}
+            <span class="badge badge-referred">Cancelled</span>
+          {% elif appointment.status == "reminded" %}
+            <span class="badge badge-open">Reminded</span>
+          {% elif appointment.status == "no_show" %}
+            <span class="badge badge-referred">No Show</span>
+          {% else %}
+            <span class="badge badge-open">Scheduled</span>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class="muted">Patient phone</div>
+        <div style="margin-top:6px;">
+          {% if appointment.patient.phone_number %}
+            <strong>{{ appointment.patient.phone_number }}</strong>
+          {% else %}
+            <span class="badge badge-referred">No phone</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card-body" style="padding-top:18px;">
+      <div class="detail">
+        <span class="muted">Reason</span>
+        <strong>{{ appointment.reason|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Notes</span>
+        <strong>{{ appointment.notes|default:"&mdash;" }}</strong>
+      </div>
+      <div class="detail">
+        <span class="muted">Scheduled by</span>
+        <strong>{{ appointment.scheduled_by.name|default:"&mdash;" }}</strong>
+      </div>
+      {% if appointment.visit %}
+      <div class="detail">
+        <span class="muted">Related visit</span>
+        <strong>
+          <a href="{% url 'core:visit_detail' appointment.visit.pk %}">
+            {{ appointment.visit.visit_date|date:"d M Y" }}
+          </a>
+        </strong>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- SMS reminder history -->
+    <h2 style="font-size:1rem; margin:20px 0 0;">SMS reminder history</h2>
+    {% if appointment.sms_reminders.all %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Phone</th>
+              <th>Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in appointment.sms_reminders.all %}
+            <tr>
+              <td>{{ r.created_at|date:"d M Y H:i" }}</td>
+              <td>{{ r.phone_number }}</td>
+              <td>
+                {% if r.status == "sent" %}
+                  <span class="badge badge-closed">Sent</span>
+                {% else %}
+                  <span class="badge badge-referred">Failed</span>
+                {% endif %}
+              </td>
+              <td style="font-size:0.85rem;">{{ r.message }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No SMS reminders sent for this appointment.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'core:appointment_dashboard' %}">&laquo; Back to appointments</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

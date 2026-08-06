@@ -1,6 +1,14 @@
 from django import forms
 
-from .models import Drug, Invoice, InvoiceLineItem, Patient, Prescription, Visit
+from .models import (
+    Appointment,
+    Drug,
+    Invoice,
+    InvoiceLineItem,
+    Patient,
+    Prescription,
+    Visit,
+)
 
 
 class PatientRegistrationForm(forms.ModelForm):
@@ -471,3 +479,58 @@ class InvoiceLineItemForm(forms.ModelForm):
                 attrs={"class": "input", "min": "0", "step": "0.01"}
             ),
         }
+
+
+class AppointmentForm(forms.ModelForm):
+    """
+    UR-24 / FR-10: schedule a follow-up appointment for a patient.
+
+    The patient is captured from the view context (UR-10: fast workflow),
+    and the appointment date is required. The reason field offers common
+    follow-up reasons as a datalist.
+    """
+
+    class Meta:
+        model = Appointment
+        fields = ["appointment_date", "reason", "notes"]
+        widgets = {
+            "appointment_date": forms.DateTimeInput(
+                attrs={"class": "input", "type": "datetime-local"},
+                format="%Y-%m-%dT%H:%M",
+            ),
+            "reason": forms.TextInput(
+                attrs={
+                    "class": "input",
+                    "list": "common-reasons",
+                    "placeholder": "e.g. Follow-up for malaria treatment review",
+                }
+            ),
+            "notes": forms.Textarea(
+                attrs={
+                    "class": "input",
+                    "rows": 3,
+                    "placeholder": "Additional notes (optional)",
+                }
+            ),
+        }
+
+    COMMON_REASONS = [
+        "Follow-up for malaria treatment review",
+        "Follow-up for hypertension check",
+        "Follow-up for diabetes management",
+        "Antenatal check-up",
+        "Postnatal check-up",
+        "Wound review / dressing change",
+        "Lab results review",
+        "Vaccination",
+        "TB treatment follow-up",
+        "HIV care / ART refill",
+    ]
+
+    def clean_appointment_date(self):
+        appointment_date = self.cleaned_data["appointment_date"]
+        from django.utils import timezone
+
+        if appointment_date < timezone.now():
+            raise forms.ValidationError("Appointment date must be in the future.")
+        return appointment_date

@@ -7,9 +7,11 @@ from django.db import models
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from .forms import (
+    AppointmentForm,
     DispenseForm,
     DrugForm,
     InvoiceLineItemForm,
@@ -19,7 +21,18 @@ from .forms import (
     RestockForm,
     VisitForm,
 )
-from .models import Drug, Invoice, Patient, Payment, Prescription, StockMovement, Visit
+from .models import (
+    Appointment,
+    Drug,
+    Invoice,
+    Patient,
+    Payment,
+    Prescription,
+    SMSReminder,
+    StockMovement,
+    Visit,
+)
+from .services import build_reminder_message, send_sms
 
 
 def health_check(request):
@@ -611,3 +624,172 @@ def billing_daily_summary(request):
         "day_payments": day_payments.select_related("invoice", "invoice__patient", "staff").order_by("-created_at"),
     }
     return render(request, "core/billing_daily_summary.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Appointments & SMS Reminders (Day 10)
+# UR-24 / FR-10 / SDD 6.6
+# ---------------------------------------------------------------------------
+
+
+@login_required
+def appointment_dashboard(request):
+    """
+    UR-24 / FR-10: appointment scheduling landing page.
+
+    Shows today's appointments, upcoming appointments, and a summary of
+    SMS reminders sent.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+
+    today = timezone.localdate()
+    today_appointments = (
+        Appointment.objects.filter(appointment_date__date=today)
+        .select_related("patient", "visit")
+        .order_by("appointment_date")
+    )
+    upcoming_appointments = (
+        Appointment.objects.filter(
+            appointment_date__gte=timezone.now(),
+            status__in=[Appointment.Status.SCHEDULED, Appointment.Status.REMINDED],
+        )
+        .select_related("patient", "visit")
+        .order_by("appointment_date")[:20]
+    )
+    recent_reminders = SMSReminder.objects.select_related("appointment", "appointment__patient").order_by("-created_at")[:10]
+
+    context = {
+        "staff": staff,
+        "today_appointments": today_appointments,
+        "upcoming_appointments": upcoming_appointments,
+        "recent_reminders": recent_reminders,
+        "today_count": today_appointments.count(),
+        "upcoming_count": upcoming_appointments.count(),
+        "reminder_sent_count": SMSReminder.objects.filter(status="sent").count(),
+    }
+    return render(request, "core/appointment_dashboard.html", context)
+
+
+@login_required
+def appointment_create(request, pk):
+    """
+    UR-24 / FR-10: schedule a follow-up appointment for a patient.
+
+    The patient is captured from the URL, and the staff member is captured
+    from the logged-in user (UR-10: fast workflow).
+    """
+    patient = get_object_or_404(Patient, pk=pk)
+    staff = getattr(request.user, "staff_profile", None)
+
+    if request.method == "POST":
+        form = AppointmentForm(request.POST)
+        if form.is_valid():
+            appointment = form.save(commit=False)
+            appointment.patient = patient
+            appointment.scheduled_by = staff
+            appointment.save()
+            messages.success(
+                request,
+                f"Appointment scheduled for {patient.full_name} on "
+                f"{appointment.appointment_date:%d %b %Y at %H:%M}.",
+            )
+            return redirect("core:appointment_dashboard")
+    else:
+        form = AppointmentForm()
+
+    return render(
+        request,
+        "core/appointment_form.html",
+        {"form": form, "patient": patient},
+    )
+
+
+@login_required
+def appointment_detail(request, pk):
+    """
+    UR-24: view a single appointment with its SMS reminder history.
+    """
+    appointment = get_object_or_404(
+        Appointment.objects.select_related("patient", "visit", "scheduled_by"),
+        pk=pk,
+    )
+    return render(
+        request,
+        "core/appointment_detail.html",
+        {"appointment": appointment},
+    )
+
+
+@login_required
+def appointment_send_reminder(request, pk):
+    """
+    UR-24 / FR-10: send an SMS reminder for an appointment.
+
+    Uses the Africa's Talking service (core.services.send_sms). If the
+    patient has no phone number, an error message is shown. The SMSReminder
+    record is created for the audit trail regardless of success/failure.
+    """
+    appointment = get_object_or_404(
+        Appointment.objects.select_related("patient"),
+        pk=pk,
+    )
+
+    if not appointment.can_send_reminder:
+        messages.error(
+            request,
+            "This appointment cannot receive an SMS reminder. "
+            "The patient needs a registered phone number and an upcoming appointment.",
+        )
+        return redirect("core:appointment_detail", pk=appointment.pk)
+
+    message = build_reminder_message(appointment)
+    result = send_sms(appointment.patient.phone_number, message)
+
+    SMSReminder.objects.create(
+        appointment=appointment,
+        phone_number=appointment.patient.phone_number,
+        message=message,
+        status="sent" if result["success"] else "failed",
+        provider_message_id=result["message_id"],
+        error_message=result["error"],
+    )
+
+    if result["success"]:
+        appointment.status = Appointment.Status.REMINDED
+        appointment.save(update_fields=["status", "last_modified"])
+        messages.success(
+            request,
+            f"SMS reminder sent to {appointment.patient.full_name} "
+            f"({appointment.patient.phone_number}).",
+        )
+    else:
+        messages.error(
+            request,
+            f"SMS reminder failed: {result['error']}",
+        )
+
+    return redirect("core:appointment_detail", pk=appointment.pk)
+
+
+@login_required
+def appointment_cancel(request, pk):
+    """
+    UR-24: cancel a scheduled appointment.
+    """
+    appointment = get_object_or_404(Appointment, pk=pk)
+    appointment.status = Appointment.Status.CANCELLED
+    appointment.save(update_fields=["status", "last_modified"])
+    messages.success(request, "Appointment cancelled.")
+    return redirect("core:appointment_dashboard")
+
+
+@login_required
+def appointment_mark_attended(request, pk):
+    """
+    UR-24: mark an appointment as attended (patient showed up).
+    """
+    appointment = get_object_or_404(Appointment, pk=pk)
+    appointment.status = Appointment.Status.ATTENDED
+    appointment.save(update_fields=["status", "last_modified"])
+    messages.success(request, "Appointment marked as attended.")
+    return redirect("core:appointment_dashboard")

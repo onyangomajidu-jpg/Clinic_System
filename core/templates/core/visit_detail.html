@@ -140,6 +140,7 @@
 
     <div style="display:flex; gap:10px; margin-top:16px; flex-wrap:wrap;">
       <a class="btn-secondary" href="{% url 'core:visit_prescription_create' visit.pk %}">Add prescription</a>
+      <a class="btn-secondary" href="{% url 'core:appointment_create' visit.patient.pk %}">Schedule appointment</a>
       {% if visit.invoice %}
         <a class="btn-secondary" href="{% url 'core:billing_invoice_detail' visit.invoice.pk %}">View invoice</a>
       {% else %}

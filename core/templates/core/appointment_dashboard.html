@@ -1,0 +1,181 @@
+{% extends "accounts/base.html" %}
+{% block title %}Appointments - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Appointments & SMS Reminders</h1>
+        <p class="muted" style="margin-top:-6px;">Schedule follow-ups and send SMS reminders (UR-24 / FR-10).</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-secondary" href="{% url 'core:patient_search' %}">Find patient</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <!-- Summary cards -->
+    <div class="menu-grid" style="margin-top:18px;">
+      <div class="menu-card">
+        <strong>Today</strong>
+        <span class="muted">{{ today_count }} appointment(s)</span>
+      </div>
+      <div class="menu-card">
+        <strong>Upcoming</strong>
+        <span class="muted">{{ upcoming_count }} appointment(s)</span>
+      </div>
+      <div class="menu-card">
+        <strong>SMS sent</strong>
+        <span class="muted">{{ reminder_sent_count }} reminder(s)</span>
+      </div>
+    </div>
+
+    <!-- Today's appointments -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Today's appointments</h2>
+    {% if today_appointments %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Patient</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for appt in today_appointments %}
+            <tr>
+              <td>{{ appt.appointment_date|date:"H:i" }}</td>
+              <td>
+                <a href="{% url 'core:patient_visits' appt.patient.pk %}">{{ appt.patient.full_name }}</a>
+                {% if appt.patient.phone_number %}
+                  <div class="muted" style="font-size:0.8rem;">{{ appt.patient.phone_number }}</div>
+                {% endif %}
+              </td>
+              <td>{{ appt.reason|default:"&mdash;" }}</td>
+              <td>
+                {% if appt.status == "attended" %}
+                  <span class="badge badge-closed">Attended</span>
+                {% elif appt.status == "cancelled" %}
+                  <span class="badge badge-referred">Cancelled</span>
+                {% elif appt.status == "reminded" %}
+                  <span class="badge badge-open">Reminded</span>
+                {% else %}
+                  <span class="badge badge-open">Scheduled</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:appointment_detail' appt.pk %}">View</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No appointments scheduled for today.</p>
+    {% endif %}
+
+    <!-- Upcoming appointments -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Upcoming appointments</h2>
+    {% if upcoming_appointments %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date & time</th>
+              <th>Patient</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for appt in upcoming_appointments %}
+            <tr>
+              <td>{{ appt.appointment_date|date:"d M Y H:i" }}</td>
+              <td>
+                <a href="{% url 'core:patient_visits' appt.patient.pk %}">{{ appt.patient.full_name }}</a>
+              </td>
+              <td>{{ appt.reason|default:"&mdash;" }}</td>
+              <td>
+                {% if appt.status == "reminded" %}
+                  <span class="badge badge-open">Reminded</span>
+                {% else %}
+                  <span class="badge badge-open">Scheduled</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:appointment_detail' appt.pk %}">View</a>
+                {% if appt.can_send_reminder %}
+                  <a class="btn-small" href="{% url 'core:appointment_send_reminder' appt.pk %}">Send SMS</a>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No upcoming appointments.</p>
+    {% endif %}
+
+    <!-- Recent SMS reminders -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Recent SMS reminders</h2>
+    {% if recent_reminders %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Patient</th>
+              <th>Phone</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in recent_reminders %}
+            <tr>
+              <td>{{ r.created_at|date:"d M Y H:i" }}</td>
+              <td>{{ r.appointment.patient.full_name }}</td>
+              <td>{{ r.phone_number }}</td>
+              <td>
+                {% if r.status == "sent" %}
+                  <span class="badge badge-closed">Sent</span>
+                {% else %}
+                  <span class="badge badge-referred">Failed</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No SMS reminders sent yet.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'accounts:dashboard' %}">&laquo; Back to dashboard</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

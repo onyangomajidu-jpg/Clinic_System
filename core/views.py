@@ -12,12 +12,14 @@ from django.views.decorators.http import require_GET
 from .forms import (
     DispenseForm,
     DrugForm,
+    InvoiceLineItemForm,
     PatientRegistrationForm,
+    PaymentForm,
     PrescriptionForm,
     RestockForm,
     VisitForm,
 )
-from .models import Drug, Patient, Prescription, StockMovement, Visit
+from .models import Drug, Invoice, Patient, Payment, Prescription, StockMovement, Visit
 
 
 def health_check(request):
@@ -402,3 +404,210 @@ def pharmacy_stock_movements(request):
             "movement_type": movement_type,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Billing & Payments (Day 9)
+# UR-15/UR-16/UR-17/UR-18, FR-7/FR-8/FR-14
+# ---------------------------------------------------------------------------
+
+
+@login_required
+def billing_dashboard(request):
+    """
+    UR-15/UR-16/UR-18: billing landing page.
+
+    Shows today's collections summary, outstanding balances, and recent
+    invoices/payments so the cashier can see the day at a glance.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+
+    today = date.today()
+    today_invoices = Invoice.objects.filter(created_at__date=today)
+    today_payments = Payment.objects.filter(created_at__date=today)
+
+    total_collected_today = sum((p.amount for p in today_payments), 0)
+    total_billed_today = sum((inv.total_amount for inv in today_invoices), 0)
+
+    outstanding_invoices = (
+        Invoice.objects.exclude(payment_status=Invoice.PaymentStatus.PAID)
+        .select_related("patient", "visit")
+        .order_by("-created_at")[:20]
+    )
+    outstanding_total = sum(
+        (inv.balance_due for inv in Invoice.objects.exclude(payment_status=Invoice.PaymentStatus.PAID)),
+        0,
+    )
+
+    recent_invoices = Invoice.objects.select_related("patient", "visit").order_by("-created_at")[:10]
+    recent_payments = Payment.objects.select_related("invoice", "invoice__patient", "staff").order_by("-created_at")[:10]
+
+    context = {
+        "staff": staff,
+        "total_collected_today": total_collected_today,
+        "total_billed_today": total_billed_today,
+        "today_invoice_count": today_invoices.count(),
+        "today_payment_count": today_payments.count(),
+        "outstanding_invoices": outstanding_invoices,
+        "outstanding_total": outstanding_total,
+        "outstanding_count": Invoice.objects.exclude(payment_status=Invoice.PaymentStatus.PAID).count(),
+        "recent_invoices": recent_invoices,
+        "recent_payments": recent_payments,
+    }
+    return render(request, "core/billing_dashboard.html", context)
+
+
+@login_required
+def billing_invoice_generate(request, pk):
+    """
+    UR-15 / FR-7: generate an invoice automatically from a visit.
+
+    Uses Invoice.generate_from_visit() to build line items from the
+    consultation fee, dispensed drugs, and lab tests. If an invoice already
+    exists for the visit, it is returned instead.
+    """
+    visit = get_object_or_404(Visit, pk=pk)
+    staff = getattr(request.user, "staff_profile", None)
+
+    invoice = Invoice.generate_from_visit(visit, staff=staff)
+    messages.success(
+        request,
+        f"Invoice {invoice.invoice_number} generated for {visit.patient.full_name} "
+        f"totalling {invoice.total_amount}.",
+    )
+    return redirect("core:billing_invoice_detail", pk=invoice.pk)
+
+
+@login_required
+def billing_invoice_detail(request, pk):
+    """
+    UR-15/UR-16/UR-17: full invoice detail with line items, payment history,
+    and a form to record a new payment.
+    """
+    invoice = get_object_or_404(
+        Invoice.objects.select_related("patient", "visit", "created_by"),
+        pk=pk,
+    )
+    staff = getattr(request.user, "staff_profile", None)
+
+    if request.method == "POST":
+        form = PaymentForm(request.POST, invoice=invoice)
+        if form.is_valid():
+            amount = form.cleaned_data["amount"]
+            method = form.cleaned_data["method"]
+            reference = form.cleaned_data["reference"]
+            try:
+                payment = invoice.record_payment(
+                    amount=amount,
+                    method=method,
+                    staff=staff,
+                    reference=reference,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return render(
+                    request,
+                    "core/billing_invoice_detail.html",
+                    {"invoice": invoice, "form": form, "staff": staff},
+                )
+            messages.success(
+                request,
+                f"Payment of {payment.amount} via {payment.get_method_display()} recorded.",
+            )
+            return redirect("core:billing_invoice_detail", pk=invoice.pk)
+    else:
+        form = PaymentForm(invoice=invoice)
+
+    return render(
+        request,
+        "core/billing_invoice_detail.html",
+        {"invoice": invoice, "form": form, "staff": staff},
+    )
+
+
+@login_required
+def billing_invoice_list(request):
+    """
+    UR-15: list all invoices, filterable by payment status.
+    """
+    invoices = Invoice.objects.select_related("patient", "visit").order_by("-created_at")
+    status = request.GET.get("status", "")
+    if status:
+        invoices = invoices.filter(payment_status=status)
+
+    paginator = Paginator(invoices, 20)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(
+        request,
+        "core/billing_invoice_list.html",
+        {
+            "page_obj": page_obj,
+            "invoices": page_obj.object_list,
+            "status": status,
+        },
+    )
+
+
+@login_required
+def billing_invoice_receipt(request, pk):
+    """
+    UR-17 / FR-14: printable receipt for a paid invoice.
+
+    Shows the invoice number, patient details, line items, payments, and
+    balance. Designed to be printed and handed to the patient.
+    """
+    invoice = get_object_or_404(
+        Invoice.objects.select_related("patient", "visit"),
+        pk=pk,
+    )
+    return render(request, "core/billing_invoice_receipt.html", {"invoice": invoice})
+
+
+@login_required
+def billing_daily_summary(request):
+    """
+    UR-18: daily collections summary.
+
+    Shows total billed, total collected, and payment breakdown by method
+    for a selected date (defaults to today).
+    """
+    staff = getattr(request.user, "staff_profile", None)
+
+    selected_date = request.GET.get("date", "")
+    if selected_date:
+        try:
+            from datetime import datetime
+
+            selected_date = datetime.strptime(selected_date, "%Y-%m-%d").date()
+        except ValueError:
+            selected_date = date.today()
+    else:
+        selected_date = date.today()
+
+    day_invoices = Invoice.objects.filter(created_at__date=selected_date)
+    day_payments = Payment.objects.filter(created_at__date=selected_date)
+
+    total_billed = sum((inv.total_amount for inv in day_invoices), 0)
+    total_collected = sum((p.amount for p in day_payments), 0)
+
+    # Payment breakdown by method
+    method_totals = {}
+    for method_key, method_label in Invoice.PaymentMethod.choices:
+        method_total = sum(
+            (p.amount for p in day_payments.filter(method=method_key)), 0
+        )
+        method_totals[method_label] = method_total
+
+    context = {
+        "staff": staff,
+        "selected_date": selected_date,
+        "total_billed": total_billed,
+        "total_collected": total_collected,
+        "invoice_count": day_invoices.count(),
+        "payment_count": day_payments.count(),
+        "method_totals": method_totals,
+        "day_invoices": day_invoices.select_related("patient", "visit").order_by("-created_at"),
+        "day_payments": day_payments.select_related("invoice", "invoice__patient", "staff").order_by("-created_at"),
+    }
+    return render(request, "core/billing_daily_summary.html", context)

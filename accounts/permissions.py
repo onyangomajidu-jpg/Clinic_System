@@ -44,6 +44,7 @@ from core.models import (
     InvoiceLineItem,
     LabTest,
     Patient,
+    Payment,
     Prescription,
     Staff,
     StockMovement,
@@ -61,6 +62,7 @@ ROLE_PERMISSIONS = {
         (Visit, ("view", "add")),
         (Invoice, VIEW_ADD_CHANGE),
         (InvoiceLineItem, VIEW_ADD_CHANGE),
+        (Payment, VIEW_ADD_CHANGE),
     ],
     Staff.Role.NURSE: [
         (Patient, VIEW_ADD_CHANGE),
@@ -102,6 +104,7 @@ ROLE_PERMISSIONS = {
         (StockMovement, VIEW_ADD_CHANGE_DELETE),
         (Invoice, VIEW_ADD_CHANGE_DELETE),
         (InvoiceLineItem, VIEW_ADD_CHANGE_DELETE),
+        (Payment, VIEW_ADD_CHANGE_DELETE),
         (LabTest, VIEW_ADD_CHANGE_DELETE),
         (Staff, VIEW_ADD_CHANGE_DELETE),
     ],

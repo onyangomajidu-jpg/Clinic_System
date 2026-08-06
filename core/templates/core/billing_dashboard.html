@@ -1,0 +1,181 @@
+{% extends "accounts/base.html" %}
+{% block title %}Billing - Clinic System{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">Clinic System</span>
+  <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
+    <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
+    <form method="post" action="{% url 'accounts:logout' %}">
+      {% csrf_token %}
+      <button type="submit">Log out</button>
+    </form>
+  </span>
+</header>
+<main>
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h1 style="margin-top:0; font-size:1.3rem;">Billing & Payments</h1>
+        <p class="muted" style="margin-top:-6px;">Generate invoices, record payments, and track balances.</p>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <a class="btn-primary" href="{% url 'core:billing_invoice_list' %}">All invoices</a>
+        <a class="btn-secondary" href="{% url 'core:billing_daily_summary' %}">Daily summary</a>
+      </div>
+    </div>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <!-- Today's summary -->
+    <div class="menu-grid" style="margin-top:18px;">
+      <div class="menu-card">
+        <strong>Collected today</strong>
+        <span class="muted">UGX {{ total_collected_today }}</span>
+      </div>
+      <div class="menu-card">
+        <strong>Billed today</strong>
+        <span class="muted">UGX {{ total_billed_today }} ({{ today_invoice_count }} invoice(s))</span>
+      </div>
+      <div class="menu-card">
+        <strong>Payments today</strong>
+        <span class="muted">{{ today_payment_count }} payment(s)</span>
+      </div>
+      <div class="menu-card">
+        <strong>Outstanding</strong>
+        <span class="muted">UGX {{ outstanding_total }} across {{ outstanding_count }} invoice(s)</span>
+      </div>
+    </div>
+
+    <!-- Outstanding balances (UR-4 / FR-8) -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Outstanding balances</h2>
+    {% if outstanding_invoices %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Patient</th>
+              <th>Total</th>
+              <th>Paid</th>
+              <th>Balance</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in outstanding_invoices %}
+            <tr>
+              <td><span class="mono">{{ inv.invoice_number|default:"&mdash;" }}</span></td>
+              <td>
+                <a href="{% url 'core:patient_visits' inv.patient.pk %}">{{ inv.patient.full_name }}</a>
+              </td>
+              <td>{{ inv.total_amount }}</td>
+              <td>{{ inv.amount_paid }}</td>
+              <td><strong>{{ inv.balance_due }}</strong></td>
+              <td>
+                {% if inv.payment_status == "paid" %}
+                  <span class="badge badge-closed">Paid</span>
+                {% elif inv.payment_status == "partial" %}
+                  <span class="badge badge-open">Partial</span>
+                {% else %}
+                  <span class="badge badge-referred">Unpaid</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:billing_invoice_detail' inv.pk %}">View</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No outstanding balances.</p>
+    {% endif %}
+
+    <!-- Recent invoices -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Recent invoices</h2>
+    {% if recent_invoices %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Patient</th>
+              <th>Date</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in recent_invoices %}
+            <tr>
+              <td><span class="mono">{{ inv.invoice_number|default:"&mdash;" }}</span></td>
+              <td>{{ inv.patient.full_name }}</td>
+              <td>{{ inv.created_at|date:"d M Y H:i" }}</td>
+              <td>{{ inv.total_amount }}</td>
+              <td>
+                {% if inv.payment_status == "paid" %}
+                  <span class="badge badge-closed">Paid</span>
+                {% elif inv.payment_status == "partial" %}
+                  <span class="badge badge-open">Partial</span>
+                {% else %}
+                  <span class="badge badge-referred">Unpaid</span>
+                {% endif %}
+              </td>
+              <td class="actions">
+                <a class="btn-small" href="{% url 'core:billing_invoice_detail' inv.pk %}">View</a>
+                <a class="btn-small" href="{% url 'core:billing_invoice_receipt' inv.pk %}">Receipt</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No invoices yet. Generate one from a patient's visit.</p>
+    {% endif %}
+
+    <!-- Recent payments -->
+    <h2 style="font-size:1rem; margin:24px 0 0;">Recent payments</h2>
+    {% if recent_payments %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Patient</th>
+              <th>Amount</th>
+              <th>Method</th>
+              <th>Staff</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in recent_payments %}
+            <tr>
+              <td>{{ p.created_at|date:"d M Y H:i" }}</td>
+              <td>{{ p.invoice.patient.full_name }}</td>
+              <td><strong>{{ p.amount }}</strong></td>
+              <td>{{ p.get_method_display }}</td>
+              <td>{{ p.staff.name|default:"&mdash;" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:12px;">No payments recorded yet.</p>
+    {% endif %}
+
+    <div class="card-foot no-print" style="margin-top:20px;">
+      <a class="btn-secondary" href="{% url 'accounts:dashboard' %}">&laquo; Back to dashboard</a>
+    </div>
+  </div>
+</main>
+{% endblock %}

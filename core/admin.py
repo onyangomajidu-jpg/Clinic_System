@@ -6,6 +6,7 @@ from .models import (
     InvoiceLineItem,
     LabTest,
     Patient,
+    Payment,
     Prescription,
     Staff,
     StockMovement,
@@ -121,6 +122,7 @@ class StockMovementAdmin(admin.ModelAdmin):
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     list_display = (
+        "invoice_number",
         "patient",
         "visit",
         "total_amount",
@@ -131,13 +133,23 @@ class InvoiceAdmin(admin.ModelAdmin):
         "created_at",
     )
     list_filter = ("payment_method", "payment_status")
-    search_fields = ("patient__full_name", "patient__patient_card_no")
-    autocomplete_fields = ["visit", "patient"]
+    search_fields = ("invoice_number", "patient__full_name", "patient__patient_card_no")
+    autocomplete_fields = ["visit", "patient", "created_by"]
     inlines = [InvoiceLineItemInline]
+    date_hierarchy = "created_at"
 
     @admin.display(description="Balance due")
     def balance_due(self, obj):
         return obj.balance_due
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ("invoice", "amount", "method", "staff", "reference", "created_at")
+    list_filter = ("method",)
+    search_fields = ("invoice__invoice_number", "invoice__patient__full_name", "reference")
+    autocomplete_fields = ["invoice", "staff"]
+    date_hierarchy = "created_at"
 
 
 @admin.register(LabTest)

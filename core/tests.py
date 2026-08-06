@@ -1782,3 +1782,395 @@ class SyncViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/javascript")
         self.assertIn("CACHE_NAME", response.content.decode())
+
+
+class EndToEndWorkflowTests(TestCase):
+    """Day 13 UAT: full end-to-end workflow — registration through billing and reporting.
+
+    Simulates the complete patient journey:
+    register patient → record visit → prescribe → dispense → generate invoice →
+    record payment → verify reports reflect the data.
+    """
+
+    def setUp(self):
+        # Receptionist registers the patient
+        self.receptionist_user = User.objects.create_user(
+            "receptionist", password="TestPass123!"
+        )
+        self.receptionist = Staff.objects.create(
+            user=self.receptionist_user,
+            name="Rita Nansubuga",
+            role=Staff.Role.RECEPTIONIST,
+        )
+
+        # Nurse records the visit
+        self.nurse_user = User.objects.create_user("nurse", password="TestPass123!")
+        self.nurse = Staff.objects.create(
+            user=self.nurse_user, name="Grace Achieng", role=Staff.Role.NURSE
+        )
+
+        # Pharmacist dispenses
+        self.pharmacist_user = User.objects.create_user(
+            "pharmacist", password="TestPass123!"
+        )
+        self.pharmacist = Staff.objects.create(
+            user=self.pharmacist_user,
+            name="Sarah Nakato",
+            role=Staff.Role.PHARMACIST,
+        )
+
+        # Cashier handles billing
+        self.cashier_user = User.objects.create_user("cashier", password="TestPass123!")
+        self.cashier = Staff.objects.create(
+            user=self.cashier_user, name="Mary Nakato", role=Staff.Role.RECEPTIONIST
+        )
+
+        # Admin views reports
+        self.admin_user = User.objects.create_user("admin", password="TestPass123!")
+        self.admin = Staff.objects.create(
+            user=self.admin_user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+
+        # Stock a drug for dispensing
+        self.drug = Drug.objects.create(
+            name="Amoxicillin",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=10,
+            unit_price="0.50",
+            expiry_date="2027-01-01",
+        )
+
+    def test_full_patient_journey(self):
+        """UR-1 → UR-7 → UR-8 → UR-12 → UR-15 → UR-16 → UR-19."""
+        # Step 1: Receptionist registers a new patient (UR-1)
+        self.client.login(username="receptionist", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:patient_register"),
+            {
+                "full_name": "Nakato Aisha",
+                "sex": "F",
+                "estimated_age": "34",
+                "phone_number": "0772123456",
+                "village": "Kyebando",
+                "parish": "Kawempe",
+                "district": "Kampala",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        patient = Patient.objects.get(full_name="Nakato Aisha")
+        self.assertTrue(patient.patient_card_no.startswith("CL-"))
+
+        # Step 2: Nurse records a visit with vitals and diagnosis (UR-7)
+        self.client.login(username="nurse", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Fever and headache for 3 days",
+                "diagnosis": "Malaria",
+                "blood_pressure": "110/70",
+                "pulse": "88",
+                "temperature": "38.5",
+                "weight": "60.0",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        visit = Visit.objects.get(patient=patient)
+        self.assertEqual(visit.diagnosis, "Malaria")
+        self.assertEqual(visit.vitals["temperature"], "38.5")
+
+        # Step 3: Nurse prescribes a drug that is in stock (UR-8)
+        response = self.client.post(
+            reverse("core:visit_prescription_create", args=[visit.pk]),
+            {
+                "drug": self.drug.pk,
+                "dosage": "500mg",
+                "frequency": "3 times a day",
+                "duration_days": "7",
+                "quantity_prescribed": "21",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        rx = Prescription.objects.get(visit=visit)
+        self.assertEqual(rx.quantity_prescribed, 21)
+
+        # Step 4: Pharmacist dispenses the full quantity (UR-12)
+        self.client.login(username="pharmacist", password="TestPass123!")
+        response = self.client.post(
+            reverse("core:pharmacy_dispense", args=[rx.pk]),
+            {"quantity_to_dispense": "21"},
+        )
+        self.assertEqual(response.status_code, 302)
+        rx.refresh_from_db()
+        self.drug.refresh_from_db()
+        self.assertEqual(rx.quantity_dispensed, 21)
+        self.assertEqual(rx.dispensed_by, self.pharmacist)
+        self.assertEqual(self.drug.stock_quantity, 79)  # 100 - 21 auto-decremented
+
+        # Step 5: Cashier generates invoice from visit (UR-15)
+        self.client.login(username="cashier", password="TestPass123!")
+        response = self.client.get(
+            reverse("core:billing_invoice_generate", args=[visit.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = Invoice.objects.get(visit=visit)
+        # Consultation fee (5000) + 21 tablets * 0.50 = 5010.50
+        self.assertEqual(invoice.total_amount, 5010.50)
+        self.assertEqual(invoice.line_items.count(), 2)
+
+        # Step 6: Cashier records payment via mobile money (UR-16)
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {
+                "amount": "5010.50",
+                "method": "mobile_money",
+                "reference": "MTN-987654",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PAID)
+        self.assertEqual(invoice.amount_paid, 5010.50)
+        self.assertEqual(invoice.balance_due, 0)
+
+        # Step 7: Admin views reports reflecting the data (UR-19)
+        self.client.login(username="admin", password="TestPass123!")
+        response = self.client.get(reverse("core:report_patient_volumes"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Patient volumes")
+
+        response = self.client.get(reverse("core:report_diagnoses"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Malaria")
+
+        response = self.client.get(reverse("core:report_revenue"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "5010.5")
+
+        response = self.client.get(reverse("core:report_drug_usage"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Amoxicillin")
+
+    def test_partial_payment_workflow(self):
+        """UR-16: partial payment leaves outstanding balance tracked."""
+        # Register patient
+        self.client.login(username="receptionist", password="TestPass123!")
+        self.client.post(
+            reverse("core:patient_register"),
+            {"full_name": "Kato John", "sex": "M", "estimated_age": "45"},
+        )
+        patient = Patient.objects.get(full_name="Kato John")
+
+        # Record visit
+        self.client.login(username="nurse", password="TestPass123!")
+        self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Cough",
+                "diagnosis": "URTI",
+            },
+        )
+        visit = Visit.objects.get(patient=patient)
+
+        # Generate invoice
+        self.client.login(username="cashier", password="TestPass123!")
+        self.client.get(reverse("core:billing_invoice_generate", args=[visit.pk]))
+        invoice = Invoice.objects.get(visit=visit)
+
+        # Partial payment
+        response = self.client.post(
+            reverse("core:billing_invoice_detail", args=[invoice.pk]),
+            {"amount": "2000", "method": "cash", "reference": "Partial-001"},
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.payment_status, Invoice.PaymentStatus.PARTIAL)
+        self.assertEqual(invoice.balance_due, 3000)
+
+        # Outstanding balance visible on billing dashboard (UR-4)
+        response = self.client.get(reverse("core:billing_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Outstanding balances")
+        self.assertContains(response, "Kato John")
+
+    def test_low_stock_alert_after_dispensing(self):
+        """UR-13: dispensing below reorder level triggers low-stock alert."""
+        # Set up a drug with low stock
+        self.drug.stock_quantity = 15
+        self.drug.reorder_level = 10
+        self.drug.save()
+
+        # Register patient and create visit
+        self.client.login(username="receptionist", password="TestPass123!")
+        self.client.post(
+            reverse("core:patient_register"),
+            {"full_name": "Low Stock Patient", "sex": "F", "estimated_age": "30"},
+        )
+        patient = Patient.objects.get(full_name="Low Stock Patient")
+
+        self.client.login(username="nurse", password="TestPass123!")
+        self.client.post(
+            reverse("core:visit_create", args=[patient.pk]),
+            {
+                "visit_type": "outpatient",
+                "status": "open",
+                "chief_complaint": "Infection",
+                "diagnosis": "Bacterial infection",
+            },
+        )
+        visit = Visit.objects.get(patient=patient)
+
+        # Prescribe 10 tablets (leaves 5, below reorder level of 10)
+        self.client.post(
+            reverse("core:visit_prescription_create", args=[visit.pk]),
+            {
+                "drug": self.drug.pk,
+                "dosage": "500mg",
+                "frequency": "2 times a day",
+                "duration_days": "5",
+                "quantity_prescribed": "10",
+            },
+        )
+        rx = Prescription.objects.get(visit=visit)
+
+        # Dispense
+        self.client.login(username="pharmacist", password="TestPass123!")
+        self.client.post(
+            reverse("core:pharmacy_dispense", args=[rx.pk]),
+            {"quantity_to_dispense": "10"},
+        )
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 5)
+        self.assertTrue(self.drug.is_low_stock)
+
+        # Pharmacy dashboard shows low-stock alert
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Low stock alerts")
+        self.assertContains(response, "Amoxicillin")
+
+
+class OfflineOnlineTransitionTests(TestCase):
+    """Day 13 UAT: simulate offline/online transitions (FR-12, FR-13).
+
+    Verifies that records created while "offline" are queued as unsynced,
+    then pushed to the central server when connectivity is restored.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user("admin", password="TestPass123!")
+        self.staff = Staff.objects.create(
+            user=self.user, name="Dr. Admin", role=Staff.Role.ADMIN
+        )
+        self.client.login(username="admin", password="TestPass123!")
+
+    def test_offline_records_queued_then_synced(self):
+        """FR-12/FR-13: records created offline are queued and pushed when online."""
+        # Simulate offline: create records (they start as unsynced)
+        patient = Patient.objects.create(
+            full_name="Offline Patient", sex="M", estimated_age=40
+        )
+        visit = Visit.objects.create(
+            patient=patient, diagnosis="Malaria", chief_complaint="Fever"
+        )
+        drug = Drug.objects.create(
+            name="Quinine",
+            unit="tablet",
+            stock_quantity=50,
+            reorder_level=10,
+            unit_price="1.00",
+        )
+        rx = Prescription.objects.create(
+            visit=visit,
+            drug=drug,
+            dosage="300mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+        # All records should be unsynced (queued locally)
+        self.assertFalse(patient.synced)
+        self.assertFalse(visit.synced)
+        self.assertFalse(rx.synced)
+
+        # Sync status page shows pending records
+        response = self.client.get(reverse("core:sync_status"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sync status")
+
+        # Simulate connectivity restored: run sync
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("pushed", data)
+        self.assertIn("Patient", data["pushed"])
+        self.assertIn("Visit", data["pushed"])
+        self.assertIn("Prescription", data["pushed"])
+
+        # All records now marked as synced
+        patient.refresh_from_db()
+        visit.refresh_from_db()
+        rx.refresh_from_db()
+        self.assertTrue(patient.synced)
+        self.assertTrue(visit.synced)
+        self.assertTrue(rx.synced)
+
+    def test_offline_dispensing_then_sync(self):
+        """FR-12: dispensing works offline; stock movement syncs when online."""
+        # Create drug and dispense while "offline"
+        drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=100,
+            reorder_level=20,
+            unit_price="0.10",
+        )
+        patient = Patient.objects.create(
+            full_name="Offline Dispense", sex="F", estimated_age=28
+        )
+        visit = Visit.objects.create(patient=patient)
+        rx = Prescription.objects.create(
+            visit=visit,
+            drug=drug,
+            dosage="500mg",
+            frequency="3 times a day",
+            duration_days=7,
+            quantity_prescribed=21,
+        )
+
+        # Dispense offline
+        drug.dispense(quantity=10, staff=self.staff, prescription=rx)
+        rx.quantity_dispensed = 10
+        rx.save()
+        drug.refresh_from_db()
+        self.assertEqual(drug.stock_quantity, 90)
+
+        # Stock movement is queued for sync
+        movement = StockMovement.objects.get(drug=drug, prescription=rx)
+        self.assertFalse(movement.synced)
+
+        # Sync when online
+        response = self.client.get(reverse("core:sync_run"))
+        self.assertEqual(response.status_code, 200)
+        movement.refresh_from_db()
+        self.assertTrue(movement.synced)
+
+    def test_pwa_offline_assets_available(self):
+        """FR-12: PWA assets are served for offline use."""
+        # Manifest
+        response = self.client.get(reverse("core:pwa_manifest"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+
+        # Service worker
+        response = self.client.get(reverse("core:pwa_service_worker"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/javascript")
+        self.assertIn("CACHE_NAME", response.content.decode())
+        self.assertIn("install", response.content.decode())
+        self.assertIn("fetch", response.content.decode())

@@ -5,4 +5,5 @@ gunicorn==22.0.0
 africastalking==1.2.9
 whitenoise==6.7.0
 dj-database-url==2.2.0
+django-extensions==4.1
 

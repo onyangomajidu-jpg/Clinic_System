@@ -1031,7 +1031,7 @@ def pwa_manifest(request):
     PWA manifest (FR-12): enables install as a native app on mobile and desktop.
     """
     manifest = {
-        "name": "ALHAMA MEDICAL CLINIC - Clinic System",
+        "name": "ALPHAMA MEDICAL CLINIC - Clinic System",
         "short_name": "Clinic System",
         "description": "Clinic Management System for Community Health Clinics",
         "start_url": "/",

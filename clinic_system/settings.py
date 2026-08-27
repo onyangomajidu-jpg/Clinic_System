@@ -244,7 +244,7 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 # Without it, the app runs in simulated mode (messages are logged, not sent).
 AT_API_KEY = os.getenv("AT_API_KEY", "")
 AT_USERNAME = os.getenv("AT_USERNAME", "sandbox")
-CLINIC_NAME = os.getenv("CLINIC_NAME", "ALHAMA MEDICAL CLINIC")
+CLINIC_NAME = os.getenv("CLINIC_NAME", "ALPHAMA MEDICAL CLINIC")
 CLINIC_LOGO_URL = "/static/logo.png"
 
 # Billing configuration (UR-15 / FR-7)

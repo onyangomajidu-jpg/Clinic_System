@@ -34,7 +34,7 @@ services:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
-      CLINIC_NAME: ${CLINIC_NAME:-ALHAMA MEDICAL CLINIC}
+      CLINIC_NAME: ${CLINIC_NAME:-ALPHAMA MEDICAL CLINIC}
     depends_on:
       db:
         condition: service_healthy

@@ -91,6 +91,34 @@
     background: #f8faf9;
     transition: border-color 0.15s, box-shadow 0.15s;
   }
+  /* Password visibility toggle wrapper */
+  .password-wrap {
+    position: relative;
+  }
+  .password-wrap input[type="password"],
+  .password-wrap input[type="text"] {
+    padding-right: 46px; /* room for the eye toggle button */
+  }
+  .toggle-pwd {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7a76;
+    border-radius: 8px;
+  }
+  .toggle-pwd:hover { color: #0f6e5c; background: #eef4f2; }
+  .toggle-pwd svg { width: 22px; height: 22px; display: block; }
+  .toggle-pwd .eye-off { display: none; }
+  .password-wrap.show .eye { display: none; }
+  .password-wrap.show .eye-off { display: block; }
   .login-card input[type="text"]:focus,
   .login-card input[type="password"]:focus {
     outline: none;
@@ -138,7 +166,36 @@
       {{ form.username }}
 
       <label for="{{ form.password.id_for_label }}">Password</label>
-      {{ form.password }}
+      <div class="password-wrap" id="password-wrap">
+        {{ form.password }}
+        <button type="button" class="toggle-pwd" id="toggle-pwd" aria-label="Show password" aria-pressed="false">
+          <svg class="eye" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg class="eye-off" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+      <script>
+        (function () {
+          var wrap = document.getElementById('password-wrap');
+          var btn = document.getElementById('toggle-pwd');
+          if (!wrap || !btn) return;
+          var input = wrap.querySelector('input');
+          btn.addEventListener('click', function () {
+            var show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            wrap.classList.toggle('show', show);
+            btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+            btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+          });
+        })();
+      </script>
 
       <input type="hidden" name="next" value="{{ next }}">
       <button type="submit" class="primary">Log in</button>

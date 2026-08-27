@@ -14,6 +14,6 @@ def clinic_info(request):
     The logo is served from the static directory as ``logo.png``.
     """
     return {
-        "clinic_name": getattr(settings, "CLINIC_NAME", "ALHAMA MEDICAL CLINIC"),
+        "clinic_name": getattr(settings, "CLINIC_NAME", "ALPHAMA MEDICAL CLINIC"),
         "clinic_logo": getattr(settings, "CLINIC_LOGO_URL", "/static/logo.png"),
     }

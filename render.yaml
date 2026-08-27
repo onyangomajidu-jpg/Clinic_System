@@ -19,12 +19,8 @@ services:
     plan: free
     dockerContext: .
     dockerfilePath: ./Dockerfile
-    # Render overrides the Dockerfile's CMD with this, so we run on $PORT
-    # (Render's assigned port) and auto-collect static + run migrations.
-    startCommand: >
-      python manage.py collectstatic --noinput &&
-      python manage.py migrate --noinput &&
-      gunicorn clinic_system.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    # NOTE: No startCommand here - Render's *docker* runtime runs the Dockerfile's
+    # CMD (which already does collectstatic + migrate + gunicorn on $PORT).
     healthCheckPath: /health/
     envVars:
       - key: DJANGO_DEBUG

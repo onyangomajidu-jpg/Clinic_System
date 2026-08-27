@@ -28,5 +28,9 @@ USER clinicuser
 
 EXPOSE 8000
 
-# Production: use gunicorn (falls back to runserver for dev via CMD override)
-CMD ["gunicorn", "clinic_system.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]
+# Production: collect static files, run migrations, then start gunicorn.
+# Uses ${PORT:-8000} so it works on Render (which assigns $PORT) and locally
+# (defaults to 8000). Shell form is required so $PORT expands at runtime.
+CMD python manage.py collectstatic --noinput && \
+    python manage.py migrate --noinput && \
+    gunicorn clinic_system.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 120

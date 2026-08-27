@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -39,10 +40,21 @@ SECRET_KEY = os.getenv(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = _bool_env("DJANGO_DEBUG", "True")
 
+# ALLOWED_HOSTS accepts a comma-separated env value, defaulting to localhost.
+# The ".onrender.com" entry (leading dot = wildcard suffix) lets Render's
+# auto-generated https://<service>.onrender.com domain work out of the box.
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    for host in os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.onrender.com").split(",")
     if host.strip()
+]
+
+# Trusted origins for HTTPS POST/CSRF. Wildcard covers Render's generated
+# subdomain; add your custom domain to DJANGO_CSRF_TRUSTED_ORIGINS if you use one.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "https://*.onrender.com").split(",")
+    if origin.strip()
 ]
 
 
@@ -55,12 +67,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_extensions',
     'core',
     'accounts',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -74,13 +88,14 @@ ROOT_URLCONF = 'clinic_system.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / "templates"],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'clinic_system.context_processors.clinic_info',
             ],
         },
     },
@@ -92,11 +107,24 @@ WSGI_APPLICATION = 'clinic_system.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 #
-# Defaults to SQLite for quick local/dev use. Set DB_ENGINE=postgresql
-# (or run via docker-compose, which sets this automatically) to use
-# PostgreSQL instead.
+# Priority:
+#  1. DATABASE_URL   - preferred for platforms like Render/Heroku that provide
+#                      a single connection string (e.g. Postgres). If set, it
+#                      wins over everything else.
+#  2. DB_ENGINE=postgresql with DB_* vars - classic env-based Postgres config
+#     (used by the bundled docker-compose).
+#  3. SQLite (default) - quick local/dev use.
 
-if os.getenv("DB_ENGINE", "sqlite3") == "postgresql":
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=(os.getenv("DB_SSL_REQUIRE", "true").strip().lower() in ("1", "true", "yes", "on")),
+        )
+    }
+elif os.getenv("DB_ENGINE", "sqlite3") == "postgresql":
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
@@ -105,6 +133,7 @@ if os.getenv("DB_ENGINE", "sqlite3") == "postgresql":
             'PASSWORD': os.getenv("DB_PASSWORD", "clinic_password"),
             'HOST': os.getenv("DB_HOST", "db"),
             'PORT': os.getenv("DB_PORT", "5432"),
+            'CONN_MAX_AGE': 600,
         }
     }
 else:
@@ -151,6 +180,29 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / "static"]
+# Where `collectstatic` gathers files for production serving (via Whitenoise).
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Serve static files in production with WhiteNoise (compressed + far-future
+# cache headers). Required because gunicorn does NOT serve static files itself.
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+# HTTPS / production security (behind a TLS-terminating proxy such as Render).
+# Whitenoise/static still work when these are off; they default to OFF for
+# local dev and you enable them on Render via env vars.
+# Render terminates TLS, so trust the upstream "X-Forwarded-Proto: https" header.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = _bool_env("DJANGO_SECURE_SSL_REDIRECT", "False")
+SESSION_COOKIE_SECURE = _bool_env("DJANGO_SESSION_COOKIE_SECURE", "False")
+CSRF_COOKIE_SECURE = _bool_env("DJANGO_CSRF_COOKIE_SECURE", "False")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
@@ -192,7 +244,8 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 # Without it, the app runs in simulated mode (messages are logged, not sent).
 AT_API_KEY = os.getenv("AT_API_KEY", "")
 AT_USERNAME = os.getenv("AT_USERNAME", "sandbox")
-CLINIC_NAME = os.getenv("CLINIC_NAME", "Community Health Clinic")
+CLINIC_NAME = os.getenv("CLINIC_NAME", "ALHAMA MEDICAL CLINIC")
+CLINIC_LOGO_URL = "/static/logo.png"
 
 # Billing configuration (UR-15 / FR-7)
 CONSULTATION_FEE = 5000  # UGX

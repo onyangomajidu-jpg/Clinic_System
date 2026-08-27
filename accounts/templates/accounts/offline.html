@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#0f6e5c">
+  <title>Offline - Clinic System</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      background: #f4f7f6;
+      color: #1f2933;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      max-width: 420px;
+      width: 100%;
+      padding: 32px 24px;
+      text-align: center;
+    }
+    .icon { font-size: 3rem; }
+    h1 { color: #0f6e5c; font-size: 1.4rem; margin: 12px 0 8px; }
+    p { color: #52606d; line-height: 1.5; }
+    button {
+      background: #0f6e5c;
+      color: #fff;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .tip { font-size: 0.85rem; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📴</div>
+    <h1>You are offline</h1>
+    <p>
+      The clinic server is not reachable right now. Any pages you have
+      previously opened are still available from your recent history.
+    </p>
+    <p>
+      New records cannot be saved until the server is back online.
+      Please check that the server computer is switched on and that
+      this device is connected to the clinic Wi-Fi.
+    </p>
+    <button onclick="window.location.reload()">Try Again</button>
+    <p class="tip">Pages you visited before will open even without the server.</p>
+  </div>
+</body>
+</html>

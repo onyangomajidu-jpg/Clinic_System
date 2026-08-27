@@ -1,0 +1,57 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+{% if recent_actions %}
+<div id="content-main">
+    <div class="module my-actions">
+        <h2>{% trans 'Recent actions (grouped by user)' %}</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 20%;">{% trans 'User' %}</th>
+                    <th>{% trans 'Actions' %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% regroup recent_actions by user as action_list %}
+                {% for user in action_list %}
+                <tr>
+                    <td style="vertical-align: top; font-weight: 600; padding: 10px;">
+                        {{ user.grouper }}
+                    </td>
+                    <td style="padding: 10px;">
+                        <ul style="list-style: none; padding: 0; margin: 0;">
+                            {% for action in user.list %}
+                            <li style="padding: 8px 0; border-bottom: 1px solid var(--border);">
+                                <span class="action-type">
+                                    {% if action.action_flag == 1 %}
+                                        {% trans 'Added' %}
+                                    {% elif action.action_flag == 2 %}
+                                        {% trans 'Changed' %}
+                                    {% elif action.action_flag == 3 %}
+                                        {% trans 'Deleted' %}
+                                    {% endif %}
+                                </span>
+                                {{ action.object_repr }}
+                                <span style="color: var(--muted); font-size: 0.85rem;">
+                                    ({{ action.content_type }})
+                                </span>
+                                <br>
+                                <small style="color: var(--muted);">{{ action.action_time|date:"M d, Y H:i" }}</small>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div id="content-main">
+    <p class="my-actions">{% trans 'No recent actions available.' %}</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -198,6 +198,80 @@ server {
 
 ---
 
+## 5b. Hosting on Render (free, internet-accessible)
+
+Render runs the app 24/7 on the internet with HTTPS and a managed PostgreSQL
+database, so phones can reach a **permanent** URL (great for the PWA
+install prompt vs. the changing Cloudflare quick-tunnel addresses).
+
+### What the repo already contains
+
+- `render.yaml` — Render Blueprint: builds the Dockerfile, creates a Postgres
+  DB, wires `DATABASE_URL`, runs `collectstatic` + `migrate` on startup, and
+  binds gunicorn to Render's `$PORT`.
+- Production settings in `clinic_system/settings.py` (WhiteNoise static
+  serving, `DATABASE_URL` support, HTTPS/proxy + secure-cookie flags, and
+  `ALLOWED_HOSTS`/CSRF defaults for `*.onrender.com`).
+- `.dockerignore` so `.venv`, `db.sqlite3`, `.env`, logs, and scripts aren't
+  baked into the image.
+
+### Steps
+
+1. **Push this repo to GitHub** (if not already the source of truth):
+   ```bash
+   git add .
+   git commit -m "Add Render hosting support"
+   git push origin main
+   ```
+   Make sure the commit above (with `render.yaml`) is on the default branch.
+
+2. **Create a Render account** at https://render.com (free tier works).
+
+3. **Add a Blueprint**:
+   - Dashboard → **New +** → **Blueprint** → connect your GitHub account/repo.
+   - Render detects `render.yaml` and lets you deploy the **web service** and
+     the **PostgreSQL** database at once.
+
+4. **Wait for the first build/deploy** (a few minutes). Render runs:
+   `collectstatic` → `migrate` → starts gunicorn.
+
+5. **Create a superuser** (once the service is live):
+   - Service → **Shell** tab, then:
+     ```bash
+     python manage.py createsuperuser
+     ```
+   - Or `python manage.py shell -c "..."` to script it.
+
+6. **Open your app** at the URL Render shows, e.g.
+   `https://clinic-system.onrender.com/`. Log in and use the system from any
+   device/browser. HTTPS + a stable URL make the **PWA install prompt**
+   reliable.
+
+### Env vars on Render (auto-set by `render.yaml`)
+| var | value |
+|-----|-------|
+| `DJANGO_DEBUG` | `false` |
+| `DJANGO_SECRET_KEY` | auto-generated |
+| `DJANGO_ALLOWED_HOSTS` | `.onrender.com,localhost,127.0.0.1` |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://*.onrender.com` |
+| `DJANGO_SECURE_SSL_REDIRECT` | `true` |
+| `DJANGO_SESSION_COOKIE_SECURE` | `true` |
+| `DJANGO_CSRF_COOKIE_SECURE` | `true` |
+| `DATABASE_URL` | Render Postgres connection string (from Blueprint) |
+
+> Add a custom domain under **Settings → Custom Domains** if you want one.
+> Add the exact `https://your-domain` to `DJANGO_CSRF_TRUSTED_ORIGINS` and
+> the host to `DJANGO_ALLOWED_HOSTS`.
+
+### Deployment notes / caveats
+- **Render free Postgres expires after 30 days** (auto-removed). For a
+  permanent store pick the paid Postgres or re-provision and re-migrate.
+- The database is ephemeral-backed on the free tier; back up regularly
+  (see Section 4).
+- Each push to the connected branch triggers an auto-deploy.
+
+---
+
 ## 6. Troubleshooting
 
 ### "Connection refused" when accessing from another device

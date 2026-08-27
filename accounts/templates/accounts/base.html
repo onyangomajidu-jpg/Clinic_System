@@ -1,25 +1,144 @@
-<!DOCTYPE html>
-{# All styling is inline/self-contained (no CDN) so the login and
-   dashboard screens keep working with no internet connection, per the
-   SDD's offline-first design goal. #}
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Clinic System{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Clinic System">
+  <title>{% block title %}{{ clinic_name }}{% endblock %}</title>
   <!-- PWA (FR-12): enables offline use and install as a native app -->
   <link rel="manifest" href="{% url 'core:pwa_manifest' %}">
   <meta name="theme-color" content="#0f6e5c">
-  <link rel="icon" href="/static/pwa/icon-192.png" sizes="192x192">
-  <link rel="apple-touch-icon" href="/static/pwa/icon-192.png">
+  <link rel="icon" href="{{ clinic_logo }}" type="image/png">
+  <link rel="apple-touch-icon" href="{{ clinic_logo }}">
   <script>
+    // PWA Install Prompt
+    let deferredPrompt;
+    let installBanner;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      installBanner = document.createElement('div');
+      installBanner.id = 'pwa-install-banner';
+      installBanner.style.cssText = 'position:fixed;bottom:20px;left:20px;right:20px;background:#0f6e5c;color:#fff;padding:16px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:9999;display:none;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;';
+      installBanner.innerHTML = '<div><strong>Install Clinic System</strong><br><small>Add to home screen for quick access</small></div><button id="pwa-install-btn" style="background:#fff;color:#0f6e5c;border:none;padding:10px 20px;border-radius:8px;font-weight:600;cursor:pointer;">Install</button><button id="pwa-dismiss-btn" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.5);padding:10px 16px;border-radius:8px;cursor:pointer;">Later</button>';
+      document.body.appendChild(installBanner);
+
+      document.getElementById('pwa-install-btn')?.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          console.log('PWA install:', outcome);
+          deferredPrompt = null;
+          installBanner.style.display = 'none';
+        }
+      });
+
+      document.getElementById('pwa-dismiss-btn')?.addEventListener('click', () => {
+        installBanner.style.display = 'none';
+      });
+    });
+    
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      // Show banner after 3 seconds
+      setTimeout(() => {
+        if (deferredPrompt) {
+          installBanner.style.display = 'flex';
+        }
+      }, 3000);
+    });
+    
+    window.addEventListener('appinstalled', () => {
+      console.log('PWA installed');
+      installBanner.style.display = 'none';
+      deferredPrompt = null;
+    });
+
+    // iOS (Safari) does NOT fire 'beforeinstallprompt', so the above banner can
+    // never appear on iPhone/iPad. Show an explicit "Add to Home Screen" guide
+    // instead (only when not already running as a standalone/installed app).
+    (function () {
+      const ua = navigator.userAgent;
+      const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+      const isStandalone =
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        (window.navigator.standalone === true);
+      if (!isIOS || isStandalone) return;
+
+      function addIosBanner() {
+        let iosBanner = document.getElementById('pwa-ios-banner');
+        if (iosBanner) return;
+        iosBanner = document.createElement('div');
+        iosBanner.id = 'pwa-ios-banner';
+        iosBanner.style.cssText = 'position:fixed;bottom:96px;left:16px;right:16px;background:#08332b;color:#fff;padding:18px;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,0.35);z-index:10001;font-size:0.95rem;line-height:1.5;display:flex;flex-direction:column;gap:10px;';
+        iosBanner.innerHTML =
+          '<div><strong>📲 Install this app</strong><br>In Safari, tap the <b>Share</b> button (square with an up arrow ▲) at the bottom, then choose <b>"Add to Home Screen"</b>.</div>' +
+          '<button id="pwa-ios-dismiss" style="background:#fff;color:#08332b;border:none;padding:10px;border-radius:8px;font-weight:600;cursor:pointer;">Got it</button>';
+        document.body.appendChild(iosBanner);
+        document.getElementById('pwa-ios-dismiss')?.addEventListener('click', () => {
+          iosBanner.style.display = 'none';
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', addIosBanner);
+      } else {
+        addIosBanner();
+      }
+    })();
+
+    // Service Worker Registration
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(error => {
-          console.log('Service worker registration failed:', error);
+        navigator.serviceWorker.register('/sw.js').then((registration) => {
+          console.log('SW registered:', registration.scope);
+          
+          // Check for updates every hour
+          setInterval(() => {
+            registration.update();
+          }, 3600000);
+        }).catch(error => {
+          console.log('SW registration failed:', error);
         });
       });
+      
+      // Listen for updates
+      let refreshing;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
     }
+
+    // Online / offline status indicator
+    document.addEventListener('DOMContentLoaded', () => {
+      const offlineBanner = document.createElement('div');
+      offlineBanner.id = 'offline-status-banner';
+      offlineBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#b3261e;color:#fff;text-align:center;padding:8px 12px;font-size:0.9rem;font-weight:600;z-index:10000;display:none;';
+      offlineBanner.textContent = '📴 Server unreachable — working offline. New records cannot be saved until the connection is restored.';
+      document.body.appendChild(offlineBanner);
+
+      function updateOnlineStatus() {
+        if (navigator.onLine) {
+          // navigator.onLine can be a false positive when the server is down,
+          // so verify the server is actually reachable before hiding the banner.
+          fetch('/health/', { method: 'GET', cache: 'no-store' })
+            .then((r) => { if (r.ok) offlineBanner.style.display = 'none'; else offlineBanner.style.display = 'block'; })
+            .catch(() => { offlineBanner.style.display = 'block'; });
+        } else {
+          offlineBanner.style.display = 'block';
+        }
+      }
+
+      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('offline', updateOnlineStatus);
+      updateOnlineStatus();
+      // Re-check server reachability periodically
+      setInterval(updateOnlineStatus, 30000);
+    });
   </script>
   <style>
     :root {

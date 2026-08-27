@@ -52,4 +52,5 @@ urlpatterns = [
     # PWA
     path("manifest.json", views.pwa_manifest, name="pwa_manifest"),
     path("sw.js", views.pwa_service_worker, name="pwa_service_worker"),
+    path("offline/", views.pwa_offline, name="pwa_offline"),
 ]

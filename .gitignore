@@ -54,3 +54,7 @@ postgres_data/
 htmlcov/
 .pytest_cache/
 .tox/
+
+# Local dev TLS certificate (private key!) - never commit
+dev.crt
+dev.key

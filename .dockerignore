@@ -1,0 +1,39 @@
+# Exclude local-only / heavy files from the Docker build context.
+# NOTE: .env values and secrets are supplied as Render environment variables,
+# NEVER baked into the image.
+
+# Virtual environments (large)
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local database & media (Postgres is managed by Render)
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs & transient files
+*.log
+server*.log
+cf_*.log
+test_out*.txt
+
+# Local dev certificates / scripts that shouldn't ship in the image
+dev.crt
+dev.key
+*.bat
+
+# IDE / OS
+.vscode/
+.idea/
+.git/
+.DS_Store

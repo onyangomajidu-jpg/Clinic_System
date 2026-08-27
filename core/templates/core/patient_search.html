@@ -1,8 +1,8 @@
-{% extends "accounts/base.html" %}
-{% block title %}Search Patients - Clinic System{% endblock %}
+﻿{% extends "accounts/base.html" %}
+{% block title %}Search Patients - {{ clinic_name }}{% endblock %}
 {% block body %}
 <header class="topbar">
-  <span class="brand">Clinic System</span>
+  <span class="brand"><img src="{{ clinic_logo }}" alt="{{ clinic_name }}" height="32" style="vertical-align:middle; margin-right:8px;">{{ clinic_name }}</span>
   <span style="display:flex; align-items:center; gap:14px;">
     <span>{{ staff.name|default:request.user.username }}{% if staff %} &middot; {{ staff.get_role_display }}{% endif %}</span>
     <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>
@@ -55,6 +55,7 @@
               <th>Sex</th>
               <th>Phone</th>
               <th>Village / Parish</th>
+              <th>Outstanding</th>
               <th></th>
             </tr>
           </thead>
@@ -67,6 +68,13 @@
                 <td>{{ patient.phone_number|default:"&mdash;" }}</td>
                 <td>
                   {{ patient.village|default:"" }}{% if patient.village and patient.parish %}, {% endif %}{{ patient.parish|default:"" }}
+                </td>
+                <td>
+                  {% if patient.outstanding_balance > 0 %}
+                    <strong style="color:#c00;">UGX {{ patient.outstanding_balance }}</strong>
+                  {% else %}
+                    <span class="muted">&mdash;</span>
+                  {% endif %}
                 </td>
                 <td class="actions">
                   <a class="btn-small" href="{% url 'core:patient_visits' patient.pk %}">Visits</a>

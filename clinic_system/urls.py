@@ -20,7 +20,7 @@ from django.views.generic import RedirectView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include('core.urls')),
     path('accounts/', include('accounts.urls')),
-    path('', RedirectView.as_view(pattern_name='accounts:dashboard', permanent=False)),
+    path('', include('core.urls')),  # Core URLs including PWA at root
+    path('', RedirectView.as_view(pattern_name='accounts:dashboard', permanent=False)),  # Root redirects to dashboard
 ]

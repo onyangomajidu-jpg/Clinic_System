@@ -1,8 +1,8 @@
-{% extends "accounts/base.html" %}
-{% block title %}Stock Movements - Clinic System{% endblock %}
+﻿{% extends "accounts/base.html" %}
+{% block title %}Stock Movements - {{ clinic_name }}{% endblock %}
 {% block body %}
 <header class="topbar">
-  <span class="brand">Clinic System</span>
+  <span class="brand"><img src="{{ clinic_logo }}" alt="{{ clinic_name }}" height="32" style="vertical-align:middle; margin-right:8px;">{{ clinic_name }}</span>
   <span style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
     <span>{{ request.user.username }}{% if request.user.staff_profile %} &middot; {{ request.user.staff_profile.get_role_display }}{% endif %}</span>
     <a class="topbar-link" href="{% url 'accounts:dashboard' %}">Dashboard</a>

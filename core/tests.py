@@ -1775,7 +1775,8 @@ class SyncViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/json")
         data = response.json()
-        self.assertEqual(data["name"], "Clinic System")
+        self.assertEqual(data["short_name"], "Clinic System")
+        self.assertIn("Clinic System", data["name"])
 
     def test_pwa_service_worker(self):
         response = self.client.get(reverse("core:pwa_service_worker"))

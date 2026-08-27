@@ -99,10 +99,20 @@ def patient_search(request):
     paginator = Paginator(patients, 20)
     page_obj = paginator.get_page(request.GET.get("page"))
 
+    # UR-4: annotate each patient with their outstanding balance so the
+    # receptionist can see at a glance whether to mention payment before
+    # referring the patient to the clinician.
+    patient_list = list(page_obj.object_list)
+    for patient in patient_list:
+        patient.outstanding_balance = sum(
+            (inv.balance_due for inv in patient.invoices.exclude(payment_status=Invoice.PaymentStatus.PAID)),
+            0,
+        )
+
     return render(
         request,
         "core/patient_search.html",
-        {"query": query, "page_obj": page_obj, "patients": page_obj.object_list},
+        {"query": query, "page_obj": page_obj, "patients": patient_list},
     )
 
 
@@ -130,10 +140,18 @@ def patient_visits(request, pk):
     """
     patient = get_object_or_404(Patient, pk=pk)
     visits = patient.visits.all()
+
+    # UR-4: show the patient's total outstanding balance so the receptionist
+    # can remind them before sending them to the doctor.
+    outstanding_balance = sum(
+        (inv.balance_due for inv in patient.invoices.exclude(payment_status=Invoice.PaymentStatus.PAID)),
+        0,
+    )
+
     return render(
         request,
         "core/patient_visits.html",
-        {"patient": patient, "visits": visits},
+        {"patient": patient, "visits": visits, "outstanding_balance": outstanding_balance},
     )
 
 
@@ -1010,26 +1028,94 @@ def sync_api_pull(request):
 
 def pwa_manifest(request):
     """
-    PWA manifest (FR-12): enables install as a native app.
+    PWA manifest (FR-12): enables install as a native app on mobile and desktop.
     """
     manifest = {
-        "name": "Clinic System",
-        "short_name": "Clinic",
+        "name": "ALHAMA MEDICAL CLINIC - Clinic System",
+        "short_name": "Clinic System",
         "description": "Clinic Management System for Community Health Clinics",
         "start_url": "/",
+        "scope": "/",
         "display": "standalone",
+        "orientation": "any",
         "background_color": "#0f6e5c",
         "theme_color": "#0f6e5c",
+        "categories": ["medical", "productivity"],
         "icons": [
+            {
+                "src": "/static/pwa/icon-72.png",
+                "sizes": "72x72",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": "/static/pwa/icon-96.png",
+                "sizes": "96x96",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": "/static/pwa/icon-128.png",
+                "sizes": "128x128",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": "/static/pwa/icon-144.png",
+                "sizes": "144x144",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": "/static/pwa/icon-152.png",
+                "sizes": "152x152",
+                "type": "image/png",
+                "purpose": "any",
+            },
             {
                 "src": "/static/pwa/icon-192.png",
                 "sizes": "192x192",
                 "type": "image/png",
+                "purpose": "any maskable",
+            },
+            {
+                "src": "/static/pwa/icon-384.png",
+                "sizes": "384x384",
+                "type": "image/png",
+                "purpose": "any",
             },
             {
                 "src": "/static/pwa/icon-512.png",
                 "sizes": "512x512",
                 "type": "image/png",
+                "purpose": "any maskable",
+            },
+        ],
+        "screenshots": [],
+        "shortcuts": [
+            {
+                "name": "Register Patient",
+                "short_name": "Register",
+                "description": "Quickly register a new patient",
+                "url": "/patients/register/",
+                "icons": [
+                    {
+                        "src": "/static/pwa/icon-96.png",
+                        "sizes": "96x96",
+                    }
+                ],
+            },
+            {
+                "name": "Search Patients",
+                "short_name": "Search",
+                "description": "Search for existing patients",
+                "url": "/patients/search/",
+                "icons": [
+                    {
+                        "src": "/static/pwa/icon-96.png",
+                        "sizes": "96x96",
+                    }
+                ],
             },
         ],
     }
@@ -1041,73 +1127,153 @@ def pwa_service_worker(request):
     PWA service worker (FR-12): caches app shell for offline use.
     """
     js = """
-const CACHE_NAME = 'clinic-system-v1';
+const CACHE_NAME = 'clinic-system-v4';
 const APP_SHELL = [
   '/',
+  '/offline/',
   '/accounts/login/',
-  '/static/pwa/icon-192.png',
-  '/static/pwa/icon-512.png',
+  '/patients/register/',
+  '/patients/search/',
+  '/manifest.json',
 ];
 
-// Install: cache the app shell
+// Install: cache the app shell.
+// IMPORTANT: cache each URL individually. cache.addAll() aborts the WHOLE
+// cache if ANY response is not 2xx - e.g. /patients/register/ returns a 302
+// login redirect when the user isn't logged in yet, which used to silently
+// prevent anything from being cached and broke offline mode.
 self.addEventListener('install', (event) => {
+  console.log('[SW] Install');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(APP_SHELL);
-    })
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      console.log('[SW] Caching app shell');
+      await Promise.all(APP_SHELL.map(async (url) => {
+        try {
+          // Wrap raw urls in Requests so they'll be treated as navigations
+          // and sent with credentials (cookies) where relevant.
+          const request = new Request(url, { credentials: 'same-origin' });
+          const response = await fetch(request);
+          if (response.ok && response.type === 'basic') {
+            await cache.put(request, response);
+          } else {
+            console.warn('[SW] Skipping (non-2xx/redirect):', url, response.status);
+          }
+        } catch (err) {
+          console.warn('[SW] Could not cache:', url, err);
+        }
+      }));
+    })()
   );
   self.skipWaiting();
 });
 
 // Activate: clean up old caches
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Activate');
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        keys.filter((key) => key !== CACHE_NAME).map((key) => {
+          console.log('[SW] Deleting old cache:', key);
+          return caches.delete(key);
+        })
       );
     })
   );
   self.clients.claim();
 });
 
-// Fetch: network-first for API calls, cache-first for static assets
+// Fetch: network-first for HTML pages, cache-first for static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
 
   // Don't cache API/sync endpoints
   if (url.pathname.includes('/api/') || url.pathname.includes('/sync/')) {
     return;
   }
 
-  // Cache-first for static assets
-  if (event.request.method === 'GET' && url.pathname.startsWith('/static/')) {
+  // Cache-first for static assets (images, CSS, JS)
+  if (url.pathname.startsWith('/static/') || url.pathname.includes('icon')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
-        return cached || fetch(event.request).then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        if (cached) {
+          return cached;
+        }
+        return fetch(event.request).then((response) => {
+          if (response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
           return response;
+        }).catch(() => {
+          // Return a placeholder for images
+          if (url.pathname.includes('icon')) {
+            return new Response('', { status: 404 });
+          }
         });
       })
     );
     return;
   }
 
-  // Network-first for pages, fall back to cache when offline
+  // Network-first for HTML pages and forms (to ensure fresh data)
+  if (event.request.headers.get('accept')?.includes('text/html')) {
+    event.respondWith(
+      fetch(event.request).then((response) => {
+        // Cache successful responses (ignore redirects, e.g. login redirects)
+        if (response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => {
+        // Server is down / offline: serve the cached page if we have it,
+        // otherwise show the dedicated offline page for navigations.
+        return caches.match(event.request).then((cached) => {
+          if (cached) return cached;
+          if (event.request.mode === 'navigate') {
+            return caches.match('/offline/');
+          }
+          return caches.match('/');
+        });
+      })
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for other requests (API, etc.)
   event.respondWith(
-    fetch(event.request).then((response) => {
-      const clone = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-      return response;
-    }).catch(() => {
-      return caches.match(event.request).then((cached) => {
-        return cached || caches.match('/');
-      });
+    caches.match(event.request).then((cached) => {
+      const fetchPromise = fetch(event.request).then((response) => {
+        if (response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => cached);
+
+      return cached || fetchPromise;
     })
   );
 });
 """
     from django.http import HttpResponse
 
-    return HttpResponse(js, content_type="application/javascript")
+    response = HttpResponse(js, content_type="application/javascript")
+    # Never cache the service worker itself, so updates are picked up
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
+def pwa_offline(request):
+    """
+    Offline fallback page (FR-12): shown by the service worker when the
+    server is unreachable and the requested page is not cached.
+    """
+    return render(request, "accounts/offline.html")

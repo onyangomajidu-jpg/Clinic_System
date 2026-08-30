@@ -155,44 +155,131 @@
       --success-bg: #e6f4ea;
     }
     * { box-sizing: border-box; }
+    html, body { margin: 0; }
     body {
-      margin: 0;
       font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
       background: var(--bg);
       color: var(--ink);
       font-size: 17px;
     }
     header.topbar {
-      background: var(--brand);
-      color: #fff;
-      padding: 14px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: #ffffff;
+      color: var(--ink);
+      padding: 10px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 4px rgba(15, 110, 92, 0.08);
     }
-    header.topbar .brand { font-weight: 600; font-size: 1.1rem; }
-    header.topbar form { margin: 0; }
-    header.topbar button {
-      background: rgba(255, 255, 255, 0.15);
+    header.topbar .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--brand-dark);
+      font-weight: 700;
+      font-size: 1.05rem;
+      text-decoration: none;
+      letter-spacing: 0.01em;
+    }
+    header.topbar .brand img {
+      height: 34px;
+      width: 34px;
+      border-radius: 8px;
+      object-fit: contain;
+      background: var(--brand-light);
+    }
+    header.topbar .top-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    header.topbar .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 12px 5px 5px;
+      background: var(--brand-light);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      min-width: 0;
+    }
+    header.topbar .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--brand);
       color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.4);
-      border-radius: 6px;
-      padding: 6px 14px;
-      font-size: 0.95rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex: none;
+    }
+    header.topbar .user-meta {
+      display: inline-flex;
+      flex-direction: column;
+      line-height: 1.2;
+      min-width: 0;
+    }
+    header.topbar .user-name {
+      font-weight: 700;
+      font-size: 0.92rem;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+    header.topbar .role-chip {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--brand-dark);
+      background: #ffffff;
+      border: 1px solid rgba(15, 110, 92, 0.4);
+      padding: 1px 8px;
+      border-radius: 999px;
+      align-self: flex-start;
+      margin-top: 2px;
+      white-space: nowrap;
+    }
+    header.topbar .logout-form { margin: 0; }
+    header.topbar .logout-btn {
+      background: #ffffff;
+      color: var(--brand-dark);
+      border: 1px solid var(--brand);
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 0.9rem;
+      font-weight: 600;
       cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    header.topbar .logout-btn:hover {
+      background: var(--brand);
+      color: #fff;
     }
     .topbar-link {
-      color: #fff;
+      color: var(--brand-dark);
       text-decoration: none;
-      font-size: 0.95rem;
-      padding: 6px 10px;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.4);
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #fff;
     }
-    .topbar-link:hover { background: rgba(255, 255, 255, 0.15); }
-    main { padding: 24px 20px; max-width: 900px; margin: 0 auto; }
+    .topbar-link:hover { background: var(--brand-light); }
+    main { padding: 22px 20px 32px; max-width: 980px; margin: 0 auto; }
     .card {
       background: #fff;
       border: 1px solid var(--border);
@@ -441,6 +528,28 @@
   </style>
 </head>
 <body>
+  {% block navbar %}
+  <header class="topbar no-print">
+    <a class="brand" href="{% url 'accounts:dashboard' %}">
+      <img src="{{ clinic_logo }}" alt="{{ clinic_name }}">
+      <span>{{ clinic_name }}</span>
+    </a>
+    <div class="top-right">
+      {% block top_actions %}{% endblock %}
+      <div class="user-chip" title="{{ request.user.username }}">
+        <span class="avatar">{{ staff.name|default:request.user.username|slice:":1"|upper }}</span>
+        <span class="user-meta">
+          <span class="user-name">{{ staff.name|default:request.user.username }}</span>
+          {% if staff %}<span class="role-chip">{{ staff.get_role_display }}</span>{% endif %}
+        </span>
+      </div>
+      <form method="post" action="{% url 'accounts:logout' %}" class="logout-form">
+        {% csrf_token %}
+        <button type="submit" class="logout-btn">Log&nbsp;out</button>
+      </form>
+    </div>
+  </header>
+  {% endblock %}
   {% block body %}{% endblock %}
 </body>
 </html>

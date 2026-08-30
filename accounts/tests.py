@@ -1,8 +1,62 @@
+from io import StringIO
+from unittest import mock
+
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 
 from core.models import Staff
+
+
+class CreateAdminCommandTests(TestCase):
+    """accounts.management.commands.create_admin - provisions the initial
+    superuser + Admin staff record from DJANGO_ADMIN_* env vars."""
+
+    def _run(self, **env):
+        with mock.patch.dict("os.environ", env, clear=False):
+            return call_command("create_admin", stdout=StringIO(), stderr=StringIO())
+
+    def test_creates_superuser_and_admin_staff(self):
+        self._run(
+            DJANGO_ADMIN_USERNAME="admin",
+            DJANGO_ADMIN_EMAIL="admin@example.com",
+            DJANGO_ADMIN_PASSWORD="Secret-123!",
+        )
+
+        user = User.objects.get(username="admin")
+        self.assertTrue(user.is_superuser)
+        self.assertTrue(user.is_staff)
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.check_password("Secret-123!"))
+
+        staff = Staff.objects.get(user=user)
+        self.assertEqual(staff.role, Staff.Role.ADMIN)
+
+    def test_idempotent_when_admin_exists(self):
+        self._run(
+            DJANGO_ADMIN_USERNAME="admin",
+            DJANGO_ADMIN_PASSWORD="First-123!",
+        )
+        self._run(
+            DJANGO_ADMIN_USERNAME="admin",
+            DJANGO_ADMIN_EMAIL="new@example.com",
+            DJANGO_ADMIN_PASSWORD="Second-123!",
+        )
+
+        user = User.objects.get(username="admin")
+        self.assertEqual(User.objects.filter(username="admin").count(), 1)
+        self.assertEqual(Staff.objects.filter(user=user).count(), 1)
+        self.assertTrue(user.check_password("Second-123!"))
+        self.assertEqual(user.email, "new@example.com")
+
+    def test_skips_when_password_missing(self):
+        out = StringIO()
+        err = StringIO()
+        with mock.patch.dict("os.environ", {}, clear=False):
+            call_command("create_admin", stdout=out, stderr=err)
+        self.assertFalse(User.objects.filter(username="admin").exists())
+        self.assertIn("DJANGO_ADMIN_PASSWORD", err.getvalue())
 
 
 class RoleGroupSyncTests(TestCase):

@@ -33,4 +33,5 @@ EXPOSE 8000
 # (defaults to 8000). Shell form is required so $PORT expands at runtime.
 CMD python manage.py collectstatic --noinput && \
     python manage.py migrate --noinput && \
+    python manage.py create_admin && \
     gunicorn clinic_system.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --timeout 120

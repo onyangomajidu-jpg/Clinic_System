@@ -233,14 +233,21 @@ install prompt vs. the changing Cloudflare quick-tunnel addresses).
      the **PostgreSQL** database at once.
 
 4. **Wait for the first build/deploy** (a few minutes). Render runs:
-   `collectstatic` → `migrate` → starts gunicorn.
+   `collectstatic` → `migrate` → `create_admin` → starts gunicorn.
 
-5. **Create a superuser** (once the service is live):
-   - Service → **Shell** tab, then:
-     ```bash
-     python manage.py createsuperuser
-     ```
-   - Or `python manage.py shell -c "..."` to script it.
+5. **Admin login is created automatically.** On startup the container runs
+   `python manage.py create_admin`, which provisions a superuser **and** the
+   "Admin / In-charge" staff record from these env vars (set in `render.yaml`):
+   - `DJANGO_ADMIN_USERNAME` = `admin`
+   - `DJANGO_ADMIN_EMAIL` = `admin@example.com`
+   - `DJANGO_ADMIN_PASSWORD` = auto-generated (`generateValue: true`)
+
+   To see the auto-generated password, go to your service → **Environment** →
+   **Reveal Config Vars**. You can rotate it anytime by editing/writing
+   `DJANGO_ADMIN_PASSWORD` in Render and re-deploying (the command is
+   idempotent and resets the password to whatever the env says on startup).
+   To change the username/email, edit `DJANGO_ADMIN_USERNAME`/`DJANGO_ADMIN_EMAIL`
+   in `render.yaml` and re-push.
 
 6. **Open your app** at the URL Render shows, e.g.
    `https://clinic-system.onrender.com/`. Log in and use the system from any
@@ -252,6 +259,9 @@ install prompt vs. the changing Cloudflare quick-tunnel addresses).
 |-----|-------|
 | `DJANGO_DEBUG` | `false` |
 | `DJANGO_SECRET_KEY` | auto-generated |
+| `DJANGO_ADMIN_USERNAME` | `admin` |
+| `DJANGO_ADMIN_EMAIL` | `admin@example.com` |
+| `DJANGO_ADMIN_PASSWORD` | auto-generated (reveal it in Render → Environment) |
 | `DJANGO_ALLOWED_HOSTS` | `.onrender.com,localhost,127.0.0.1` |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://*.onrender.com` |
 | `DJANGO_SECURE_SSL_REDIRECT` | `true` |

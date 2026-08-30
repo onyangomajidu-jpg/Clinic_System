@@ -166,22 +166,22 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: #ffffff;
-      color: var(--ink);
+      background: var(--brand);
+      color: #fff;
       padding: 10px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      border-bottom: 1px solid var(--border);
-      box-shadow: 0 1px 4px rgba(15, 110, 92, 0.08);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
     }
     header.topbar .brand {
       display: inline-flex;
       align-items: center;
       gap: 10px;
-      color: var(--brand-dark);
+      color: #fff;
       font-weight: 700;
       font-size: 1.05rem;
       text-decoration: none;
@@ -192,7 +192,7 @@
       width: 34px;
       border-radius: 8px;
       object-fit: contain;
-      background: var(--brand-light);
+      background: rgba(255, 255, 255, 0.9);
     }
     header.topbar .top-right {
       display: flex;
@@ -205,8 +205,8 @@
       align-items: center;
       gap: 10px;
       padding: 5px 12px 5px 5px;
-      background: var(--brand-light);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.35);
       border-radius: 999px;
       min-width: 0;
     }
@@ -214,8 +214,8 @@
       width: 32px;
       height: 32px;
       border-radius: 50%;
-      background: var(--brand);
-      color: #fff;
+      background: #fff;
+      color: var(--brand-dark);
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -232,7 +232,7 @@
     header.topbar .user-name {
       font-weight: 700;
       font-size: 0.92rem;
-      color: var(--ink);
+      color: #fff;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -243,9 +243,9 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      color: var(--brand-dark);
-      background: #ffffff;
-      border: 1px solid rgba(15, 110, 92, 0.4);
+      color: #fff;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.4);
       padding: 1px 8px;
       border-radius: 999px;
       align-self: flex-start;
@@ -254,9 +254,9 @@
     }
     header.topbar .logout-form { margin: 0; }
     header.topbar .logout-btn {
-      background: #ffffff;
-      color: var(--brand-dark);
-      border: 1px solid var(--brand);
+      background: transparent;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 8px;
       padding: 7px 14px;
       font-size: 0.9rem;
@@ -265,20 +265,20 @@
       transition: background 0.15s ease, color 0.15s ease;
     }
     header.topbar .logout-btn:hover {
-      background: var(--brand);
+      background: rgba(255, 255, 255, 0.18);
       color: #fff;
     }
     .topbar-link {
-      color: var(--brand-dark);
+      color: #fff;
       text-decoration: none;
       font-size: 0.9rem;
       font-weight: 600;
       padding: 7px 12px;
       border-radius: 8px;
-      border: 1px solid var(--border);
-      background: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: transparent;
     }
-    .topbar-link:hover { background: var(--brand-light); }
+    .topbar-link:hover { background: rgba(255, 255, 255, 0.15); }
     main { padding: 22px 20px 32px; max-width: 980px; margin: 0 auto; }
     .card {
       background: #fff;

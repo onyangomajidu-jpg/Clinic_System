@@ -16,8 +16,12 @@ def dashboard(request):
     accounts.mixins.RoleRequiredMixin.
     """
     staff = getattr(request.user, "staff_profile", None)
+    is_admin_user = request.user.is_superuser or (
+        staff is not None and staff.role == "admin"
+    )
     context = {
         "staff": staff,
+        "is_admin_user": is_admin_user,
         "can_manage_patients": request.user.has_perm("core.view_patient"),
         "can_manage_visits": request.user.has_perm("core.view_visit"),
         "can_manage_pharmacy": request.user.has_perm("core.view_drug"),

@@ -164,4 +164,4 @@ class LoginFlowTests(TestCase):
     def test_logout_redirects_to_login(self):
         self.client.login(username="dr.who", password="TestPass123!")
         response = self.client.post(reverse("accounts:logout"), follow=True)
-        self.assertContains(response, "Sign in to continue")
+        self.assertContains(response, "Sign in with your staff account to continue")

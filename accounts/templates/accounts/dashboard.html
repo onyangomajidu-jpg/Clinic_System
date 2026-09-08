@@ -64,11 +64,13 @@
       {% endif %}
     </div>
 
+    {% if is_admin_user %}
     <p class="muted" style="font-size:0.9rem;">
       For advanced data entry, the
       <a href="/admin/">admin area</a> is also available and only shows the
       sections your role is permitted to use.
     </p>
+    {% endif %}
   </div>
 </main>
 {% endblock %}

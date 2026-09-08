@@ -1,0 +1,70 @@
+{% extends "accounts/base.html" %}
+{% block title %}Walk-in dispense - {{ clinic_name }}{% endblock %}
+{% block body %}
+<main>
+  <div class="card">
+    <h1 style="margin-top:0; font-size:1.3rem;">Dispense to patient (walk-in)</h1>
+    <p class="muted" style="margin-top:-6px;">
+      For patients collecting medication without a visit or prescription &mdash;
+      e.g. collecting a repeat course or buying over-the-counter stock.
+    </p>
+
+    {% if messages %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+
+    <form method="post" style="margin-top:18px;">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="error">{{ form.non_field_errors }}</div>
+      {% endif %}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}
+          <span class="hint">{{ field.help_text }}</span>
+        {% endif %}
+        {% if field.errors %}
+          <span class="field-error">{{ field.errors }}</span>
+        {% endif %}
+      {% endfor %}
+      <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
+        <button class="btn-primary" type="submit">Dispense</button>
+        <a class="btn-secondary" href="{% url 'core:pharmacy_dashboard' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+
+  {% if recent_walkins %}
+  <div class="card" style="margin-top:18px;">
+    <h2 style="margin-top:0; font-size:1.1rem;">Recent walk-in dispenses</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Patient</th>
+          <th>Drug</th>
+          <th>Quantity</th>
+          <th>Charge</th>
+          <th>Dispensed by</th>
+          <th>When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dispense in recent_walkins %}
+        <tr>
+          <td>{{ dispense.patient.full_name }}</td>
+          <td>{{ dispense.drug.name }}</td>
+          <td>{{ dispense.quantity }} {{ dispense.drug.unit }}(s)</td>
+          <td>{{ dispense.total_charge }}</td>
+          <td>{{ dispense.dispensed_by.name|default:"-" }}</td>
+          <td>{{ dispense.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

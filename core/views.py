@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -20,9 +20,11 @@ from .forms import (
     PrescriptionForm,
     RestockForm,
     VisitForm,
+    WalkInDispenseForm,
 )
 from .models import (
     Appointment,
+    DirectDispense,
     Drug,
     Invoice,
     Patient,
@@ -334,6 +336,55 @@ def pharmacy_dispense(request, pk):
         request,
         "core/pharmacy_dispense.html",
         {"form": form, "prescription": prescription, "staff": staff},
+    )
+
+
+@login_required
+def pharmacy_walkin_dispense(request):
+    """
+    Walk-in / over-the-counter dispensing (UR-12 extension).
+
+    Lets the pharmacy dispense drugs directly to a registered patient who
+    is not admitted / not currently at the facility through a visit — no
+    Visit or Prescription needed. Stock is decremented atomically via
+    Drug.dispense() (FR-5) and the dispense is recorded in DirectDispense
+    with the unit price snapshotted for billing/audit purposes.
+    """
+    staff = getattr(request.user, "staff_profile", None)
+
+    if request.method == "POST":
+        form = WalkInDispenseForm(request.POST)
+        if form.is_valid():
+            drug = form.cleaned_data["drug"]
+            quantity = form.cleaned_data["quantity"]
+            try:
+                with transaction.atomic():
+                    drug.dispense(quantity, staff=staff)
+                    DirectDispense.objects.create(
+                        patient=form.cleaned_data["patient"],
+                        drug=drug,
+                        quantity=quantity,
+                        unit_price=drug.unit_price,
+                        dispensed_by=staff,
+                        notes=form.cleaned_data.get("notes", ""),
+                    )
+            except ValueError as exc:
+                form.add_error("quantity", str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Dispensed {quantity} {drug.unit}(s) of {drug.name} "
+                    f"(walk-in). Remaining stock: {drug.stock_quantity}.",
+                )
+                return redirect("core:pharmacy_walkin_dispense")
+    else:
+        form = WalkInDispenseForm()
+
+    recent = DirectDispense.objects.select_related("patient", "drug", "dispensed_by")[:10]
+    return render(
+        request,
+        "core/pharmacy_walkin_dispense.html",
+        {"form": form, "recent_walkins": recent},
     )
 
 

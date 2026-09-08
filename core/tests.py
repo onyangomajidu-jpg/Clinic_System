@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
@@ -10,9 +13,11 @@ from .forms import (
     PaymentForm,
     PrescriptionForm,
     VisitForm,
+    WalkInDispenseForm,
 )
 from .models import (
     Appointment,
+    DirectDispense,
     Drug,
     Invoice,
     InvoiceLineItem,
@@ -1497,7 +1502,7 @@ class AppointmentSMSReminderTests(TestCase):
         message = build_reminder_message(self.appointment)
         self.assertIn("Nakato Aisha", message)
         self.assertIn("Follow-up", message)
-        self.assertIn("Community Health Clinic", message)
+        self.assertIn(settings.CLINIC_NAME, message)
 
 
 class ReportingServiceTests(TestCase):
@@ -2175,3 +2180,89 @@ class OfflineOnlineTransitionTests(TestCase):
         self.assertIn("CACHE_NAME", response.content.decode())
         self.assertIn("install", response.content.decode())
         self.assertIn("fetch", response.content.decode())
+
+
+class WalkInDispenseTests(TestCase):
+    """Walk-in / OTC dispensing to patients not admitted through a visit."""
+
+    def setUp(self):
+        from django.test import Client
+
+        self.client = Client()
+        self.patient = Patient.objects.create(full_name="Jane Walkin", sex=Patient.Sex.FEMALE)
+        self.drug = Drug.objects.create(
+            name="Paracetamol",
+            unit="tablet",
+            stock_quantity=50,
+            unit_price=Decimal("0.50"),
+        )
+        self.user = User.objects.create_user(username="pharm", password="TestPass123!")
+        self.pharmacist = Staff.objects.create(
+            user=self.user, name="Pharmacist P", role=Staff.Role.PHARMACIST
+        )
+
+    def test_form_rejects_quantity_over_stock(self):
+        form = WalkInDispenseForm(
+            data={
+                "patient": self.patient.pk,
+                "drug": self.drug.pk,
+                "quantity": 100,
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("quantity", form.errors)
+
+    def test_form_valid(self):
+        form = WalkInDispenseForm(
+            data={
+                "patient": self.patient.pk,
+                "drug": self.drug.pk,
+                "quantity": 10,
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_view_dispenses_without_visit_or_prescription(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("core:pharmacy_walkin_dispense"),
+            {
+                "patient": self.patient.pk,
+                "drug": self.drug.pk,
+                "quantity": 10,
+                "notes": "Collected repeat course",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        dispense = DirectDispense.objects.get()
+        self.assertEqual(dispense.patient, self.patient)
+        self.assertEqual(dispense.quantity, 10)
+        self.assertEqual(dispense.unit_price, Decimal("0.50"))
+        self.assertEqual(dispense.total_charge, Decimal("5.00"))
+        self.assertEqual(dispense.dispensed_by, self.pharmacist)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 40)
+        movement = StockMovement.objects.get(drug=self.drug)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.DISPENSE)
+        self.assertIsNone(movement.prescription)
+
+    def test_view_rejects_when_insufficient_stock(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("core:pharmacy_walkin_dispense"),
+            {
+                "patient": self.patient.pk,
+                "drug": self.drug.pk,
+                "quantity": 500,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(DirectDispense.objects.count(), 0)
+        self.drug.refresh_from_db()
+        self.assertEqual(self.drug.stock_quantity, 50)
+
+    def test_dashboard_has_walkin_link(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("core:pharmacy_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("core:pharmacy_walkin_dispense"))

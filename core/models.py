@@ -388,6 +388,58 @@ class StockMovement(SyncedModel):
         return f"{self.get_movement_type_display()} {self.quantity} {self.drug.unit}(s) of {self.drug.name}"
 
 
+class DirectDispense(SyncedModel):
+    """
+    Walk-in / over-the-counter dispensing (UR-12 extension).
+
+    Lets the pharmacy hand drugs to a registered patient who is NOT
+    currently at the facility through a visit — no Visit or Prescription
+    record required. Stock is still decremented atomically via
+    Drug.dispense() and every dispense is audit-logged (StockMovement),
+    exactly like prescription dispensing.
+
+    unit_price is snapshotted at dispense time so the recorded charge is
+    the price actually charged, even if the drug's price changes later.
+    """
+
+    patient = models.ForeignKey(
+        Patient,
+        on_delete=models.PROTECT,
+        related_name="direct_dispenses",
+        help_text="Registered patient collecting the medication.",
+    )
+    drug = models.ForeignKey(Drug, on_delete=models.PROTECT, related_name="direct_dispenses")
+    quantity = models.PositiveIntegerField(help_text="Quantity handed to the patient.")
+    unit_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Drug unit price snapshotted at dispense time.",
+    )
+    dispensed_by = models.ForeignKey(
+        Staff,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="direct_dispenses",
+        help_text="Pharmacy staff member who dispensed (audit trail).",
+    )
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.drug.name} x{self.quantity} for {self.patient.full_name} (walk-in)"
+
+    @property
+    def total_charge(self):
+        """What the patient was charged for this walk-in dispense."""
+        return self.unit_price * self.quantity
+
+
 class Invoice(SyncedModel):
     """
     UR-15/UR-16/UR-17: one invoice per visit, covering consultation + drugs

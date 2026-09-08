@@ -40,6 +40,7 @@ Design notes tying back to the requirements docs:
 
 from core.models import (
     Appointment,
+    DirectDispense,
     Drug,
     Invoice,
     InvoiceLineItem,
@@ -53,6 +54,7 @@ from core.models import (
     Visit,
 )
 
+VIEW_ADD = ("view", "add")
 VIEW_ADD_CHANGE = ("view", "add", "change")
 VIEW_ADD_CHANGE_DELETE = ("view", "add", "change", "delete")
 VIEW_ONLY = ("view",)
@@ -94,6 +96,7 @@ ROLE_PERMISSIONS = {
         (Prescription, VIEW_CHANGE),
         (Drug, VIEW_ADD_CHANGE),
         (StockMovement, VIEW_ONLY),
+        (DirectDispense, VIEW_ADD),
     ],
     Staff.Role.LAB_TECHNICIAN: [
         (Patient, VIEW_ONLY),
@@ -106,6 +109,7 @@ ROLE_PERMISSIONS = {
         (Drug, VIEW_ADD_CHANGE_DELETE),
         (Prescription, VIEW_ADD_CHANGE_DELETE),
         (StockMovement, VIEW_ADD_CHANGE_DELETE),
+        (DirectDispense, VIEW_ADD_CHANGE_DELETE),
         (Invoice, VIEW_ADD_CHANGE_DELETE),
         (InvoiceLineItem, VIEW_ADD_CHANGE_DELETE),
         (Payment, VIEW_ADD_CHANGE_DELETE),

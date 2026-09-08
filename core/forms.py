@@ -353,6 +353,52 @@ class DispenseForm(forms.Form):
         return quantity
 
 
+class WalkInDispenseForm(forms.Form):
+    """
+    Walk-in / over-the-counter dispensing (UR-12 extension).
+
+    Lets the pharmacy dispense a drug directly to a registered patient
+    without a visit or prescription. The quantity is validated against the
+    selected drug's available stock; Drug.dispense() re-validates
+    atomically in the view.
+    """
+
+    patient = forms.ModelChoiceField(
+        queryset=Patient.objects.all().order_by("full_name"),
+        label="Patient",
+        help_text="The registered patient collecting the medication.",
+        widget=forms.Select(attrs={"class": "input"}),
+    )
+    drug = forms.ModelChoiceField(
+        queryset=Drug.objects.filter(stock_quantity__gt=0).order_by("name"),
+        label="Drug",
+        help_text="Only drugs currently in stock are listed.",
+        widget=forms.Select(attrs={"class": "input"}),
+    )
+    quantity = forms.IntegerField(
+        min_value=1,
+        label="Quantity to dispense",
+        widget=forms.NumberInput(attrs={"class": "input", "min": 1}),
+    )
+    notes = forms.CharField(
+        required=False,
+        max_length=200,
+        label="Notes (optional)",
+        widget=forms.TextInput(attrs={"class": "input"}),
+    )
+
+    def clean_quantity(self):
+        """Ensure the requested quantity does not exceed available stock."""
+        quantity = self.cleaned_data["quantity"]
+        drug = self.cleaned_data.get("drug")
+        if drug is not None and quantity > drug.stock_quantity:
+            raise forms.ValidationError(
+                f"Not enough stock for {drug.name}: only {drug.stock_quantity} "
+                f"{drug.unit}(s) available."
+            )
+        return quantity
+
+
 class DrugForm(forms.ModelForm):
     """
     Pharmacy stock management: add or edit a drug (UR-13).

@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import (
     Appointment,
+    DirectDispense,
     Drug,
     Invoice,
     InvoiceLineItem,
@@ -118,6 +119,27 @@ class StockMovementAdmin(admin.ModelAdmin):
     search_fields = ("drug__name", "staff__name")
     autocomplete_fields = ["drug", "prescription", "staff"]
     date_hierarchy = "created_at"
+
+
+@admin.register(DirectDispense)
+class DirectDispenseAdmin(admin.ModelAdmin):
+    list_display = (
+        "patient",
+        "drug",
+        "quantity",
+        "unit_price",
+        "total_charge_display",
+        "dispensed_by",
+        "created_at",
+    )
+    search_fields = ("patient__full_name", "drug__name", "notes")
+    autocomplete_fields = ["patient", "drug", "dispensed_by"]
+    list_filter = ("drug",)
+    date_hierarchy = "created_at"
+
+    @admin.display(description="Total charge")
+    def total_charge_display(self, obj):
+        return obj.total_charge
 
 
 @admin.register(Invoice)

@@ -22,6 +22,7 @@ urlpatterns = [
     path("pharmacy/drugs/<uuid:pk>/edit/", views.pharmacy_drug_edit, name="pharmacy_drug_edit"),
     path("pharmacy/drugs/<uuid:pk>/restock/", views.pharmacy_restock, name="pharmacy_restock"),
     path("pharmacy/dispense/<uuid:pk>/", views.pharmacy_dispense, name="pharmacy_dispense"),
+    path("pharmacy/dispense-walk-in/", views.pharmacy_walkin_dispense, name="pharmacy_walkin_dispense"),
     path("pharmacy/movements/", views.pharmacy_stock_movements, name="pharmacy_stock_movements"),
     # Billing & Payments
     path("billing/", views.billing_dashboard, name="billing_dashboard"),

@@ -1089,8 +1089,8 @@ def pwa_manifest(request):
         "scope": "/",
         "display": "standalone",
         "orientation": "any",
-        "background_color": "#0f6e5c",
-        "theme_color": "#0f6e5c",
+        "background_color": "#14532d",
+        "theme_color": "#14532d",
         "categories": ["medical", "productivity"],
         "icons": [
             {

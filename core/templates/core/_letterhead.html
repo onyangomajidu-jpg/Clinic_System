@@ -1,0 +1,62 @@
+{% comment %}
+Printable letterhead (headed paper): clinic logo, name, location, contacts.
+Include at the top of any printable document, e.g.
+  {% include "core/_letterhead.html" %}
+{% endcomment %}
+<div class="letterhead">
+  <img class="letterhead-logo" src="{{ clinic_logo }}" alt="{{ clinic_name }} logo">
+  <div class="letterhead-info">
+    <div class="letterhead-name">{{ clinic_name }}</div>
+    <div class="letterhead-contact">
+      <span>📍 {{ clinic_location }}</span>
+      {% if clinic_phones %}<span>📞 {{ clinic_phones }}</span>{% endif %}
+      {% if clinic_email %}<span>✉️ {{ clinic_email }}</span>{% endif %}
+    </div>
+  </div>
+</div>
+<style>
+  .letterhead {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 3px solid var(--brand, #16a34a);
+    padding-bottom: 12px;
+    margin-bottom: 18px;
+  }
+  .letterhead-logo {
+    height: 58px;
+    width: 58px;
+    object-fit: contain;
+    border-radius: 10px;
+    background: #fff;
+    border: 1px solid var(--border, #e2e8f0);
+    padding: 3px;
+    flex: none;
+  }
+  .letterhead-info { min-width: 0; }
+  .letterhead-name {
+    font-size: 1.35rem;
+    font-weight: 800;
+    color: var(--brand-dark, #14532d);
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+  }
+  .letterhead-contact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin-top: 4px;
+    font-size: 0.85rem;
+    color: var(--muted, #64748b);
+  }
+  @media (max-width: 480px) {
+    .letterhead { gap: 10px; }
+    .letterhead-logo { height: 46px; width: 46px; }
+    .letterhead-name { font-size: 1.1rem; }
+    .letterhead-contact { font-size: 0.78rem; gap: 3px 10px; }
+  }
+  @media print {
+    .letterhead { border-bottom-color: #16a34a; page-break-inside: avoid; }
+    .letterhead-logo { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>

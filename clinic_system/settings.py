@@ -246,6 +246,9 @@ AT_API_KEY = os.getenv("AT_API_KEY", "")
 AT_USERNAME = os.getenv("AT_USERNAME", "sandbox")
 CLINIC_NAME = os.getenv("CLINIC_NAME", "ALPHAMA MEDICAL CLINIC")
 CLINIC_LOGO_URL = "/static/logo.png"
+CLINIC_LOCATION = os.getenv("CLINIC_LOCATION", "Luwero Kalongo")
+CLINIC_PHONES = os.getenv("CLINIC_PHONES", "0709497851 / 0778637668")
+CLINIC_EMAIL = os.getenv("CLINIC_EMAIL", "servicesanlik@gmail.com")
 
 # Billing configuration (UR-15 / FR-7)
 CONSULTATION_FEE = 5000  # UGX

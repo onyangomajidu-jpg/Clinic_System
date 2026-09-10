@@ -3,10 +3,10 @@
 {% block body %}
 <main>
   <div class="card patient-card">
+    {% include "core/_letterhead.html" %}
     <div class="card-head">
       <div>
-        <h1 style="margin:0; font-size:1.2rem;"><img src="{{ clinic_logo }}" alt="{{ clinic_name }}" height="32" style="vertical-align:middle; margin-right:8px;">{{ clinic_name }}</h1>
-        
+        <h1 style="margin:0; font-size:1.2rem;">Receipt</h1>
       </div>
       <div class="card-no">
         <div class="muted" style="font-size:0.8rem;">Receipt</div>

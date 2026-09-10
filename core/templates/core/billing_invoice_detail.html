@@ -3,6 +3,7 @@
 {% block body %}
 <main>
   <div class="card">
+    {% include "core/_letterhead.html" %}
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
       <div>
         <h1 style="margin-top:0; font-size:1.3rem;">Invoice <span class="mono">{{ invoice.invoice_number|default:"&mdash;" }}</span></h1>

@@ -16,4 +16,7 @@ def clinic_info(request):
     return {
         "clinic_name": getattr(settings, "CLINIC_NAME", "ALPHAMA MEDICAL CLINIC"),
         "clinic_logo": getattr(settings, "CLINIC_LOGO_URL", "/static/logo.png"),
+        "clinic_location": getattr(settings, "CLINIC_LOCATION", "Luwero Kalongo"),
+        "clinic_phones": getattr(settings, "CLINIC_PHONES", ""),
+        "clinic_email": getattr(settings, "CLINIC_EMAIL", ""),
     }

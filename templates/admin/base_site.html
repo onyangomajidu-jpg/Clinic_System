@@ -1,98 +1,180 @@
 {% extends "admin/base.html" %}
-{% load static %}
+{% load i18n static %}
 
 {% block extrastyle %}
     {{ block.super }}
     <link rel="icon" href="{% static 'logo.png' %}" type="image/png">
     <style>
         :root {
-            --brand: #0f6e5c;
-            --brand-dark: #0b5346;
-            --brand-light: #e6f2ef;
-            --ink: #1f2933;
-            --muted: #52606d;
-            --border: #d9e2ec;
-            --bg: #f4f7f6;
-            --error: #b3261e;
-            --error-bg: #fbeae9;
-            --success: #1e7e34;
-            --success-bg: #e6f4ea;
+            --brand: #16a34a;
+            --brand-dark: #14532d;
+            --brand-mid: #15803d;
+            --brand-light: #dcfce7;
+            --brand-grad: linear-gradient(135deg, #14532d 0%, #166534 50%, #16a34a 100%);
+            --ink: #0f172a;
+            --muted: #64748b;
+            --border: #e2e8f0;
+            --bg: #f1f8f2;
+            --accent: #dc2626;
+            --accent-dark: #b91c1c;
+            --error: #b91c1c;
+            --error-bg: #fef2f2;
+            --success: #16a34a;
+            --success-bg: #f0fdf4;
         }
         #header {
-            background: var(--brand) !important;
+            background: var(--brand-grad) !important;
             color: #fff !important;
-        }
-        #header .brand-group {
             display: flex;
             align-items: center;
-            gap: 12px;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px 20px;
+            padding: 10px 24px !important;
+            border: none !important;
+            box-shadow: 0 3px 18px rgba(20, 83, 45, 0.45) !important;
         }
-        #header .brand-group img {
-            height: 40px;
-            width: auto;
+        #branding {
+            display: flex;
+            align-items: center;
+            min-width: 0;
+        }
+        .brand-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+        .brand-logo {
+            width: 46px;
+            height: 46px;
+            flex: none;
+            border-radius: 12px;
+            background: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+        }
+        .brand-logo img {
+            height: 42px;
+            width: 42px;
+            object-fit: contain;
+            border-radius: 9px;
+            display: block;
         }
         #header h1 {
-            font-weight: 600;
-            font-size: 1.3rem;
+            font-weight: 800;
+            font-size: 1.28rem;
             color: #fff !important;
             letter-spacing: 0.02em;
             margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.15;
         }
         #header a:link, #header a:visited {
             color: #fff !important;
             text-decoration: none;
         }
         #header a:hover {
-            opacity: 0.9;
+            opacity: 0.95;
         }
-        #header .header-right {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        #header .header-right a {
-            color: #fff !important;
-            font-weight: 500;
-            padding: 6px 12px;
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.15);
-            text-decoration: none;
-            transition: background 0.2s;
-        }
-        #header .header-right a:hover {
-            background: rgba(255, 255, 255, 0.25);
-        }
-        #header .user-tools {
-            color: #fff !important;
+        #user-tools {
             display: flex;
             align-items: center;
             gap: 10px;
+            flex-wrap: wrap;
+            color: #fff !important;
+            margin: 0 !important;
             font-size: 0.95rem;
         }
-        #header .user-tools .welcome {
-            font-weight: 500;
-            opacity: 0.95;
+        .welcome-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 4px 14px 4px 5px;
+            border-radius: 999px;
+            min-width: 0;
         }
-        #header .user-tools a {
-            color: #fff !important;
-            font-weight: 500;
-            padding: 8px 16px;
-            border-radius: 20px;
-            background: rgba(255, 255, 255, 0.12);
-            text-decoration: none;
-            transition: all 0.25s ease;
-            border: 1px solid rgba(255, 255, 255, 0.25);
+        .welcome-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #fff;
+            color: var(--brand-dark);
+            font-weight: 800;
+            font-size: 0.95rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+        }
+        .welcome-text {
             font-size: 0.9rem;
-            backdrop-filter: blur(4px);
+            white-space: nowrap;
         }
-        #header .user-tools a:hover {
-            background: rgba(255, 255, 255, 0.25);
-            border-color: rgba(255, 255, 255, 0.5);
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        .welcome-text strong {
+            font-weight: 800;
+            color: #fff;
         }
-        #header .user-tools .dropdown-toggle {
+        .usertools-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .user-pill {
             color: #fff !important;
+            font-weight: 600;
+            font-size: 0.85rem;
+            padding: 8px 15px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.32);
+            text-decoration: none;
+            white-space: nowrap;
+            transition: background 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+        }
+        .user-pill:hover {
+            background: rgba(255, 255, 255, 0.28);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+        }
+        #logout-form {
+            margin: 0;
+        }
+        #logout-form button {
+            background: var(--accent) !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 999px;
+            padding: 8px 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(220, 38, 38, 0.42);
+            transition: background 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+        }
+        #logout-form button:hover {
+            background: var(--accent-dark) !important;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 14px rgba(220, 38, 38, 0.5);
+        }
+        #header .theme-toggle {
+            align-self: center;
+        }
+        @media (max-width: 767px) {
+            #header { padding: 10px 14px !important; gap: 8px 10px; }
+            #header h1 { font-size: 1.05rem; }
+            .brand-logo { width: 40px; height: 40px; }
+            .brand-logo img { height: 36px; width: 36px; }
+            .welcome-text { font-size: 0.82rem; }
+            .user-pill { padding: 7px 11px; font-size: 0.8rem; }
+            #logout-form button { padding: 7px 14px; font-size: 0.8rem; }
         }
         .module h2 {
             background: var(--brand-light) !important;
@@ -112,9 +194,21 @@
             background: var(--brand) !important;
             border-color: var(--brand) !important;
             color: #fff !important;
+            border-radius: 8px !important;
+            font-weight: 600;
         }
         .button:hover, input[type=submit]:hover, input[type=button]:hover, .submit-row input:hover {
             background: var(--brand-dark) !important;
+        }
+        .deletelink {
+            background: var(--accent) !important;
+            border: 1px solid var(--accent) !important;
+            color: #fff !important;
+            border-radius: 8px !important;
+            font-weight: 600;
+        }
+        .deletelink:hover {
+            background: var(--accent-dark) !important;
         }
         .nav-sidebar {
             background: #fff !important;
@@ -214,7 +308,7 @@
         input[type=text]:focus, input[type=password]:focus, input[type=email]:focus, input[type=url]:focus, input[type=number]:focus, input[type=date]:focus, input[type=datetime]:focus, input[type=time]:focus, select:focus, textarea:focus {
             border-color: var(--brand) !important;
             outline: none !important;
-            box-shadow: 0 0 0 3px rgba(15, 110, 92, 0.15) !important;
+            box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.16) !important;
         }
         #content-related {
             background: #fff !important;
@@ -306,7 +400,38 @@
 
 {% block branding %}
     <div class="brand-group">
-        <img src="{% static 'logo.png' %}" alt="{{ clinic_name }} logo" height="40">
+        <span class="brand-logo">
+            <img src="{% static 'logo.png' %}" alt="{{ clinic_name }} logo">
+        </span>
         <h1><a href="{% url 'admin:index' %}">{{ clinic_name }}</a></h1>
+    </div>
+{% endblock %}
+
+{% block welcome-msg %}
+    <div class="welcome-chip">
+        <span class="welcome-avatar">{{ user.get_short_name|default:user.get_username|slice:":1"|upper }}</span>
+        <span class="welcome-text">{% translate 'Welcome' %}, <strong>{% firstof user.get_short_name user.get_username %}</strong>.</span>
+    </div>
+{% endblock %}
+
+{% block userlinks %}
+    <div class="usertools-group">
+        {% if site_url %}
+            <a class="user-pill" href="{{ site_url }}">{% translate 'View site' %}</a>
+        {% endif %}
+        {% if user.is_active and user.is_staff %}
+            {% url 'django-admindocs-docroot' as docsroot %}
+            {% if docsroot %}
+                <a class="user-pill" href="{{ docsroot }}">{% translate 'Documentation' %}</a>
+            {% endif %}
+        {% endif %}
+        {% if user.has_usable_password %}
+            <a class="user-pill" href="{% url 'admin:password_change' %}">{% translate 'Change password' %}</a>
+        {% endif %}
+        <form id="logout-form" method="post" action="{% url 'admin:logout' %}">
+            {% csrf_token %}
+            <button type="submit">{% translate 'Log out' %}</button>
+        </form>
+        {% include "admin/color_theme_toggle.html" %}
     </div>
 {% endblock %}

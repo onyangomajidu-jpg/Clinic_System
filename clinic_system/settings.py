@@ -73,6 +73,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'clinic_system.csrf_diagnostics.CsrfDiagnosticsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

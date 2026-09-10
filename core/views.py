@@ -1178,7 +1178,7 @@ def pwa_service_worker(request):
     PWA service worker (FR-12): caches app shell for offline use.
     """
     js = """
-const CACHE_NAME = 'clinic-system-v4';
+const CACHE_NAME = 'clinic-system-v5';
 const APP_SHELL = [
   '/',
   '/offline/',
@@ -1238,6 +1238,14 @@ self.addEventListener('activate', (event) => {
 // Fetch: network-first for HTML pages, cache-first for static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+
+  // NEVER intercept the Django admin: its forms carry per-session CSRF
+  // tokens, and Django rotates the CSRF cookie on login. Serving a stale
+  // cached admin form (old token) against the new cookie causes
+  // "CSRF verification failed" 403s on submit.
+  if (url.pathname.startsWith('/admin/')) {
+    return;
+  }
 
   // Skip non-GET requests
   if (event.request.method !== 'GET') {

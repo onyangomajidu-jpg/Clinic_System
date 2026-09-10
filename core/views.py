@@ -1094,49 +1094,49 @@ def pwa_manifest(request):
         "categories": ["medical", "productivity"],
         "icons": [
             {
-                "src": "/static/pwa/icon-72.png",
+                "src": "/static/pwa/icon-72.png?v=2",
                 "sizes": "72x72",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-96.png",
+                "src": "/static/pwa/icon-96.png?v=2",
                 "sizes": "96x96",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-128.png",
+                "src": "/static/pwa/icon-128.png?v=2",
                 "sizes": "128x128",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-144.png",
+                "src": "/static/pwa/icon-144.png?v=2",
                 "sizes": "144x144",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-152.png",
+                "src": "/static/pwa/icon-152.png?v=2",
                 "sizes": "152x152",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-192.png",
+                "src": "/static/pwa/icon-192.png?v=2",
                 "sizes": "192x192",
                 "type": "image/png",
                 "purpose": "any maskable",
             },
             {
-                "src": "/static/pwa/icon-384.png",
+                "src": "/static/pwa/icon-384.png?v=2",
                 "sizes": "384x384",
                 "type": "image/png",
                 "purpose": "any",
             },
             {
-                "src": "/static/pwa/icon-512.png",
+                "src": "/static/pwa/icon-512.png?v=2",
                 "sizes": "512x512",
                 "type": "image/png",
                 "purpose": "any maskable",
@@ -1178,7 +1178,7 @@ def pwa_service_worker(request):
     PWA service worker (FR-12): caches app shell for offline use.
     """
     js = """
-const CACHE_NAME = 'clinic-system-v5';
+const CACHE_NAME = 'clinic-system-v6';
 const APP_SHELL = [
   '/',
   '/offline/',

@@ -74,11 +74,15 @@
     </div>
 
     {% if is_admin_user %}
-    <p class="muted" style="font-size:0.9rem;">
-      For advanced data entry, the
-      <a href="/admin/">admin area</a> is also available and only shows the
-      sections your role is permitted to use.
-    </p>
+    <div class="admin-area-cta">
+      <p class="muted" style="font-size:0.9rem;">
+        For advanced data entry, the admin area is also available and only shows the sections your role is permitted to use.
+      </p>
+      <a class="admin-area-link" href="{% url 'admin:index' %}">
+        <span>{{ clinic_name }} Admin</span>
+        <span class="admin-area-arrow">&rarr;</span>
+      </a>
+    </div>
     {% endif %}
   </div>
 </main>

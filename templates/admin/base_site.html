@@ -23,6 +23,9 @@
             --success-bg: #f0fdf4;
         }
         #header {
+            position: sticky;
+            top: 0;
+            box-sizing: border-box;
             background: var(--brand-grad) !important;
             color: #fff !important;
             display: flex;
@@ -34,6 +37,14 @@
             border: none !important;
             box-shadow: 0 3px 18px rgba(20, 83, 45, 0.45) !important;
         }
+        /* Brand the breadcrumb bar so no plain/white strip shows under the header */
+        .breadcrumbs {
+            background: var(--brand-light) !important;
+            color: var(--brand-dark) !important;
+            padding: 6px 16px !important;
+            font-size: 0.85rem !important;
+        }
+        .breadcrumbs a { color: var(--brand-dark) !important; }
         #branding {
             display: flex;
             align-items: center;

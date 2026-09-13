@@ -303,27 +303,69 @@
       transition: background 0.15s ease;
     }
     .topbar-link:hover { background: rgba(255, 255, 255, 0.26); }
-    .back-link {
+
+    /* ===== Bottom "Back to dashboard" bar (non-dashboard pages only) ===== */
+    footer.footer-dash {
+      display: flex;
+      justify-content: center;
+      margin: 18px auto 0;
+      max-width: 1040px;
+      padding: 20px 0;
+    }
+    footer.footer-dash .back-link {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      gap: 8px;
+      color: var(--brand-dark);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 800;
+      padding: 13px 26px;
+      border-radius: 999px;
+      border: 2px solid var(--brand);
+      background: var(--brand-light);
+      box-shadow: var(--shadow-sm);
+      white-space: nowrap;
+      transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+    }
+    footer.footer-dash .back-link:hover {
+      background: var(--brand);
+      color: #fff;
+      transform: translateY(-1px);
+      box-shadow: 0 5px 16px rgba(20, 83, 45, 0.28);
+    }
+
+    /* ===== Professional "Admin Area" call-to-action link (dashboard) ===== */
+    .admin-area-cta {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow-sm);
+    }
+    .admin-area-cta p { margin: 0 0 12px; }
+    .admin-area-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
       color: #fff;
       text-decoration: none;
-      font-size: 0.9rem;
       font-weight: 700;
-      padding: 8px 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(255, 255, 255, 0.4);
-      background: rgba(255, 255, 255, 0.14);
-      white-space: nowrap;
-      flex: none;
-      transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+      font-size: 0.95rem;
+      padding: 12px 20px;
+      border-radius: 10px;
+      background: var(--brand-grad);
+      border: none;
+      box-shadow: 0 3px 12px rgba(20, 83, 45, 0.3);
+      transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
     }
-    .back-link:hover {
-      background: rgba(255, 255, 255, 0.3);
-      transform: translateX(-1px);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    .admin-area-link:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+      box-shadow: 0 6px 18px rgba(20, 83, 45, 0.4);
     }
+    .admin-area-arrow { font-weight: 900; }
     main { padding: 26px 22px 40px; max-width: 1040px; margin: 0 auto; }
     .card {
       background: #fff;
@@ -603,7 +645,7 @@
       body { font-size: 16px; }
       header.topbar { padding: 8px 14px; gap: 8px; }
       header.topbar .brand { font-size: 0.98rem; gap: 8px; }
-      header.topbar .back-link { padding: 7px 11px; font-size: 0.82rem; }
+      footer.footer-dash .back-link { padding: 11px 18px; font-size: 0.88rem; }
       header.topbar .brand img { height: 34px; width: 34px; }
       header.topbar .user-chip { padding: 3px 10px 3px 3px; gap: 7px; }
       header.topbar .avatar { width: 30px; height: 30px; font-size: 0.8rem; }
@@ -648,9 +690,6 @@
 <body>
   {% block navbar %}
   <header class="topbar no-print">
-    {% if request.resolver_match.url_name != 'dashboard' %}
-    <a class="back-link" href="{% url 'accounts:dashboard' %}" title="Back to dashboard">&#8592;&nbsp;Back</a>
-    {% endif %}
     <a class="brand" href="{% url 'accounts:dashboard' %}">
       <img src="{{ clinic_logo }}" alt="{{ clinic_name }}">
       <span>{{ clinic_name }}</span>
@@ -672,5 +711,12 @@
   </header>
   {% endblock %}
   {% block body %}{% endblock %}
+  {% block footer %}
+  {% if request.resolver_match.url_name != 'dashboard' %}
+  <footer class="footer-dash no-print">
+    <a class="back-link" href="{% url 'accounts:dashboard' %}" title="Back to dashboard">&#8592;&nbsp;Back to Dashboard</a>
+  </footer>
+  {% endif %}
+  {% endblock %}
 </body>
 </html>

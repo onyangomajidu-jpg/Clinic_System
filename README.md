@@ -101,6 +101,7 @@ static/              # Static assets (CSS, PWA icons)
 scripts/             # Deployment & backup scripts
 DEPLOYMENT.md        # Deployment guide
 TRAINING.md          # User training material
+OFFLINE_SETUP.md     # Offline (FR-12) local deployment guide
 Dockerfile
 docker-compose.yml
 .env.example

@@ -49,13 +49,62 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
+
+def _local_lan_ips():
+    """Best-effort discovery of this machine's LAN IP(s).
+
+    Offline-first (UR FR-12 / SDD 2.2 model 1): the clinic server is reached
+    from phones/tablets over the clinic Wi-Fi via https://<server-IP>:8000.
+    That IP changes per network, so hard-coding one IP in the .env breaks
+    offline use elsewhere. Auto-detect and trust it instead.
+    """
+    ips = set()
+    try:
+        import socket
+
+        hostname = socket.gethostname()
+        try:
+            for info in socket.getaddrinfo(hostname, None):
+                ip = info[4][0]
+                if ip and not ip.startswith("127.") and ":" not in ip:
+                    ips.add(ip)
+        except socket.gaierror:
+            pass
+        # Connect-out trick reveals the preferred outbound (LAN) address
+        # without sending any traffic.
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            if lan_ip and not lan_ip.startswith("127."):
+                ips.add(lan_ip)
+            s.close()
+        except OSError:
+            pass
+    except Exception:
+        pass
+    return sorted(ips)
+
+
+_LOCAL_LAN_IPS = _local_lan_ips()
+for _ip in _LOCAL_LAN_IPS:
+    if _ip not in ALLOWED_HOSTS and "*" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_ip)
+
 # Trusted origins for HTTPS POST/CSRF. Wildcard covers Render's generated
 # subdomain; add your custom domain to DJANGO_CSRF_TRUSTED_ORIGINS if you use one.
+# Offline-first (UR FR-12): the clinic server is also reached over the LAN as
+# https://<server-IP>:8000, so auto-trust the detected LAN IPs too — otherwise
+# every form POST from a phone/tablet fails CSRF on the local network.
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "https://*.onrender.com").split(",")
     if origin.strip()
 ]
+for _ip in _LOCAL_LAN_IPS:
+    for _origin in (f"https://{_ip}:8000", f"http://{_ip}:8000"):
+        if _origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(_origin)
 
 
 # Application definition

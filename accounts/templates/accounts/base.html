@@ -118,19 +118,22 @@
       const offlineBanner = document.createElement('div');
       offlineBanner.id = 'offline-status-banner';
       offlineBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#b3261e;color:#fff;text-align:center;padding:8px 12px;font-size:0.9rem;font-weight:600;z-index:10000;display:none;';
-      offlineBanner.textContent = '📴 Server unreachable — working offline. New records cannot be saved until the connection is restored.';
+      // NOTE (UR FR-12 / SDD 2.2 model 1): this system runs on the clinic's
+      // OWN server, so "no internet" does NOT mean "cannot save". Saving works
+      // whenever the clinic server is reachable; only the cloud extras (SMS,
+      // cloud backup, multi-clinic sync) need the internet.
+      offlineBanner.textContent = 'No internet connection — you can keep working: records save to the clinic server and will sync later.';
       document.body.appendChild(offlineBanner);
 
       function updateOnlineStatus() {
-        if (navigator.onLine) {
-          // navigator.onLine can be a false positive when the server is down,
-          // so verify the server is actually reachable before hiding the banner.
-          fetch('/health/', { method: 'GET', cache: 'no-store' })
-            .then((r) => { if (r.ok) offlineBanner.style.display = 'none'; else offlineBanner.style.display = 'block'; })
-            .catch(() => { offlineBanner.style.display = 'block'; });
-        } else {
-          offlineBanner.style.display = 'block';
-        }
+        // navigator.onLine only reports INTERNET access, which this system does
+        // not need (it runs on the clinic server over the local network). So
+        // always verify the CLINIC SERVER itself via /health/ instead of
+        // trusting navigator.onLine — otherwise staff see a scary
+        // "Server unreachable" banner even while saving works fine.
+        fetch('/health/', { method: 'GET', cache: 'no-store' })
+          .then((r) => { offlineBanner.style.display = r.ok ? 'none' : 'block'; })
+          .catch(() => { offlineBanner.style.display = 'block'; });
       }
 
       window.addEventListener('online', updateOnlineStatus);

@@ -1178,7 +1178,7 @@ def pwa_service_worker(request):
     PWA service worker (FR-12): caches app shell for offline use.
     """
     js = """
-const CACHE_NAME = 'clinic-system-v6';
+const CACHE_NAME = 'clinic-system-v7';
 const APP_SHELL = [
   '/',
   '/offline/',
